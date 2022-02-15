@@ -32,7 +32,7 @@ import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import jolie.lang.NativeType;
-import jolie.lang.parse.OLVisitor;
+import jolie.lang.parse.UnitOLVisitor;
 import jolie.lang.parse.ast.*;
 import jolie.lang.parse.ast.courier.CourierChoiceStatement;
 import jolie.lang.parse.ast.courier.CourierDefinitionNode;
@@ -46,7 +46,7 @@ import java.util.*;
 
 import static jsdt.JSDTVisitor.JSDTVisitorUtils.*;
 
-public class JSDTVisitor implements OLVisitor< Void, Void > {
+public class JSDTVisitor implements UnitOLVisitor {
 
 	private final List< CompilationUnit > compilationUnits;
 	private final String packageName;
@@ -54,7 +54,7 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 	private final Set< TypeDefinition > collectedInterfaceTypes;
 	static private final Set< String > visitedTypes = new HashSet<>();
 
-	private JSDTVisitor( String packageName ) {
+	private JSDTVisitor(String packageName ) {
 		this.compilationUnits = new LinkedList<>();
 		this.lineage = new Stack<>();
 		this.packageName = packageName;
@@ -71,13 +71,13 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 
 	public static List< CompilationUnit > generateInterfaceClass( InterfaceDefinition ctx, String packageName ) {
 		JSDTVisitor jsdt = new JSDTVisitor( packageName );
-		jsdt.visit( ctx, null );
+		jsdt.visit( ctx );
 		return jsdt.compilationUnits;
 	}
 
 	public static List< CompilationUnit > generateInterfaceAndTypeClasses( InterfaceDefinition ctx, String packageName ) {
 		JSDTVisitor jsdt = new JSDTVisitor( packageName );
-		jsdt.visit( ctx, null );
+		jsdt.visit( ctx );
 		jsdt.collectedInterfaceTypes.forEach( td -> {
 			jsdt.compilationUnits.addAll( generateTypeClasses( td, packageName ) );
 		} );
@@ -90,340 +90,20 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 
 	public void visit( TypeDefinition typeDefinition ) {
 		if ( typeDefinition instanceof TypeInlineDefinition ) {
-			visit( ( TypeInlineDefinition ) typeDefinition, null );
+			visit( ( TypeInlineDefinition ) typeDefinition );
 		} else if ( typeDefinition instanceof TypeDefinitionLink ) {
-			visit( ( TypeDefinitionLink ) typeDefinition, null );
+			visit( ( TypeDefinitionLink ) typeDefinition );
 		} else if ( typeDefinition instanceof TypeChoiceDefinition ) {
-			visit( ( TypeChoiceDefinition ) typeDefinition, null );
+			visit( ( TypeChoiceDefinition ) typeDefinition );
 		} else {
 			throw new RuntimeException( "Unrecognized " + typeDefinition.getClass() );
 		}
 	}
 
 	@Override
-	public Void visit( Program program, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( OneWayOperationDeclaration oneWayOperationDeclaration, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( RequestResponseOperationDeclaration requestResponseOperationDeclaration, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( DefinitionNode definitionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ParallelStatement parallelStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SequenceStatement sequenceStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( NDChoiceStatement ndChoiceStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( OneWayOperationStatement oneWayOperationStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( RequestResponseOperationStatement requestResponseOperationStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( NotificationOperationStatement notificationOperationStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SolicitResponseOperationStatement solicitResponseOperationStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( LinkInStatement linkInStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( LinkOutStatement linkOutStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( AssignStatement assignStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( AddAssignStatement addAssignStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SubtractAssignStatement subtractAssignStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( MultiplyAssignStatement multiplyAssignStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( DivideAssignStatement divideAssignStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( IfStatement ifStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( DefinitionCallStatement definitionCallStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( WhileStatement whileStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( OrConditionNode orConditionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( AndConditionNode andConditionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( NotExpressionNode notExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( CompareConditionNode compareConditionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ConstantIntegerExpression constantIntegerExpression, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ConstantDoubleExpression constantDoubleExpression, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ConstantBoolExpression constantBoolExpression, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ConstantLongExpression constantLongExpression, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ConstantStringExpression constantStringExpression, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ProductExpressionNode productExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SumExpressionNode sumExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( VariableExpressionNode variableExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( NullProcessStatement nullProcessStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( Scope scope, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( InstallStatement installStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( CompensateStatement compensateStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ThrowStatement throwStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ExitStatement exitStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ExecutionInfo executionInfo, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( CorrelationSetInfo correlationSetInfo, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( InputPortInfo inputPortInfo, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( OutputPortInfo outputPortInfo, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( PointerStatement pointerStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( DeepCopyStatement deepCopyStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( RunStatement runStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( UndefStatement undefStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ValueVectorSizeExpressionNode valueVectorSizeExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( PreIncrementStatement preIncrementStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( PostIncrementStatement postIncrementStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( PreDecrementStatement preDecrementStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( PostDecrementStatement postDecrementStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ForStatement forStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ForEachSubNodeStatement forEachSubNodeStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( ForEachArrayItemStatement forEachArrayItemStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SpawnStatement spawnStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( IsTypeExpressionNode isTypeExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( InstanceOfExpressionNode instanceOfExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( TypeCastExpressionNode typeCastExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( SynchronizedStatement synchronizedStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( CurrentHandlerStatement currentHandlerStatement, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( EmbeddedServiceNode embeddedServiceNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( InstallFixedVariableExpressionNode installFixedVariableExpressionNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( VariablePathNode variablePathNode, Void unused ) {
-		return null;
-	}
-
-	@Override
-	public Void visit( TypeInlineDefinition typeInlineDefinition, Void unused ) {
+	public void visit( TypeInlineDefinition typeInlineDefinition ) {
 		if ( typeInlineDefinition.name().equals( "undefined" ) ) {
-			return null;
+			return;
 		}
 		visitedTypes.add( typeInlineDefinition.name() );
 		BasicTypeDefinition basicTypeDefinition = typeInlineDefinition.basicType();
@@ -441,8 +121,8 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 		}
 
 		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( getLineage() )
-						.setModifier( Modifier.Keyword.PUBLIC, true )
-						.addExtendedType( "BasicType<" + javaNativeType + ">" );
+				.setModifier( Modifier.Keyword.PUBLIC, true )
+				.addExtendedType( "BasicType<" + javaNativeType + ">" );
 
 		ConstructorDeclaration constructorDeclaration = theClass.addConstructor( Modifier.Keyword.PUBLIC );
 		BlockStmt constructorDeclarationBody = constructorDeclaration.createBody();
@@ -458,7 +138,7 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 		StringJoiner parseReturnParameters = new StringJoiner( ", " );
 		if ( !basicTypeDefinition.nativeType().equals( NativeType.VOID ) ) {
 			parseReturnParameters.add(
-							jolieToGetValueOptional( basicTypeDefinition.nativeType() ).isEmpty() ? "value" : "value." + jolieToGetValueOptional( basicTypeDefinition.nativeType() ).get() + "()" );
+					jolieToGetValueOptional( basicTypeDefinition.nativeType() ).isEmpty() ? "value" : "value." + jolieToGetValueOptional( basicTypeDefinition.nativeType() ).get() + "()" );
 		}
 
 		parseMethod.setType( new ClassOrInterfaceType().setName( getLineage() ) );
@@ -466,9 +146,9 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 		IfStmt parseIfStm = new IfStmt();
 		parseBody.addStatement( parseIfStm );
 		parseIfStm.setCondition( new ExpressionStmt()
-						.setExpression( "value != null"
-										+ ( jolieToIsValue( basicTypeDefinition.nativeType() ).isEmpty() ? "" : " && value." + jolieToIsValue( basicTypeDefinition.nativeType() ).get() + "()" ) )
-						.getExpression() );
+				.setExpression( "value != null"
+						+ ( jolieToIsValue( basicTypeDefinition.nativeType() ).isEmpty() ? "" : " && value." + jolieToIsValue( basicTypeDefinition.nativeType() ).get() + "()" ) )
+				.getExpression() );
 		BlockStmt ifBranch = new BlockStmt();
 		parseIfStm.setElseStmt( new BlockStmt().addStatement( "return null;" ) );
 		parseIfStm.setThenStmt( ifBranch );
@@ -500,9 +180,9 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 						fieldTypeName = "Value";
 				}
 				FieldDeclaration field = theClass.addField(
-								cardinalityClass + "<" + fieldTypeName + ">",
-								nodeName,
-								Modifier.Keyword.PRIVATE, Modifier.Keyword.FINAL
+						cardinalityClass + "<" + fieldTypeName + ">",
+						nodeName,
+						Modifier.Keyword.PRIVATE, Modifier.Keyword.FINAL
 				);
 				constructorDeclaration.addParameter( field.getCommonType(), nodeName );
 				constructorDeclarationBody.addStatement( "this." + nodeName + "=" + nodeName + ";" );
@@ -510,31 +190,31 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 				StringJoiner s = new StringJoiner( " " );
 				if ( cardinalityClass.equals( Cardinalities.Multi ) ) {
 					s.add( cardinalityClass + "<" + fieldTypeName + ">" )
-									.add( nodeName )
-									.add( "=" )
-									.add( cardinalityClass + ".of( value.getChildren(" )
-									.add( "\"" + nodeName + "\"" );
+							.add( nodeName )
+							.add( "=" )
+							.add( cardinalityClass + ".of( value.getChildren(" )
+							.add( "\"" + nodeName + "\"" );
 					if ( !fieldTypeName.equals( "Value" ) ) {
 						s.add( ").stream().map(" )
-										.add( fieldTypeName + "::parse" );
+								.add( fieldTypeName + "::parse" );
 					} else {
 						s.add( ").stream(" );
 					}
 					s.add( ").collect( Collectors.toList() ) );" );
 				} else {
 					s.add( cardinalityClass + "<" + fieldTypeName + ">" )
-									.add( nodeName )
-									.add( "=" )
-									.add( cardinalityClass + ".of(" );
+							.add( nodeName )
+							.add( "=" )
+							.add( cardinalityClass + ".of(" );
 					if ( fieldTypeName.equals( "Value" ) ) {
 						s.add( "value.getChildren(" )
-										.add( "\"" + nodeName + "\"" )
-										.add( ").get( 0 ) );" );
+								.add( "\"" + nodeName + "\"" )
+								.add( ").get( 0 ) );" );
 					} else {
 						s.add( fieldTypeName + ".parse(" )
-										.add( "value.getChildren(" )
-										.add( "\"" + nodeName + "\"" )
-										.add( ").get( 0 ) ) );" );
+								.add( "value.getChildren(" )
+								.add( "\"" + nodeName + "\"" )
+								.add( ").get( 0 ) ) );" );
 					}
 				}
 				ifBranch.addStatement( s.toString() );
@@ -547,22 +227,69 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 		toValueMethodBody.addStatement( "return value;" );
 
 		compilationUnits.add( compilationUnit );
-		return null;
 	}
 
 	@Override
-	public Void visit( TypeDefinitionLink typeDefinitionLink, Void unused ) {
+	public void visit( TypeDefinitionLink typeDefinitionLink ) {
 		if ( !visitedTypes.contains( typeDefinitionLink.linkedType().name() ) ) {
 			visitedTypes.add( typeDefinitionLink.linkedType().name() );
 			this.compilationUnits.addAll(
-							JSDTVisitor.generateTypeClasses( typeDefinitionLink.linkedType(), packageName )
+					JSDTVisitor.generateTypeClasses( typeDefinitionLink.linkedType(), packageName )
 			);
 		}
-		return null;
 	}
 
 	@Override
-	public Void visit( InterfaceDefinition interfaceDefinition, Void unused ) {
+	public void visit( TypeChoiceDefinition typeChoiceDefinition ) {
+		visitedTypes.add( typeChoiceDefinition.name() );
+		CompilationUnit compilationUnit = new CompilationUnit();
+		compilationUnit.setPackageDeclaration( packageName );
+
+		compilationUnit.addImport( "jsdt.core.types.ChoiceType" );
+		compilationUnit.addImport( "jolie.runtime.Value" );
+
+		String leftClassName = typeChoiceDefinition.left() instanceof TypeDefinitionLink ?
+				( ( TypeDefinitionLink ) typeChoiceDefinition.left() ).linkedType().name()
+				: getLineage() + "_1";
+		String rightClassName = typeChoiceDefinition.right() instanceof TypeDefinitionLink ?
+				( ( TypeDefinitionLink ) typeChoiceDefinition.right() ).linkedType().name()
+				: getLineage() + "_2";
+
+		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( getLineage() )
+				.setModifier( Modifier.Keyword.PUBLIC, true )
+				.addExtendedType( "ChoiceType<" + leftClassName + ", " + rightClassName + ">" );
+		ConstructorDeclaration constructorDeclaration = theClass.addConstructor( Modifier.Keyword.PUBLIC );
+		constructorDeclaration.addParameter( leftClassName, "left" );
+		constructorDeclaration.addParameter( rightClassName, "right" );
+		BlockStmt constructorDeclarationBody = constructorDeclaration.createBody();
+		constructorDeclarationBody.addStatement( "super( left, right );" );
+
+		MethodDeclaration parseMethod = theClass.addMethod( "parse", Modifier.Keyword.PUBLIC, Modifier.Keyword.STATIC );
+		parseMethod.addParameter( "Value", "value" );
+		parseMethod.setType( new ClassOrInterfaceType().setName( getLineage() ) );
+		BlockStmt parseBody = parseMethod.createBody();
+		parseBody.addStatement( leftClassName + " left = " + leftClassName + ".parse( value );" );
+		parseBody.addStatement( rightClassName + " right = " + rightClassName + ".parse( value );" );
+		IfStmt parseIfStm = new IfStmt();
+		parseBody.addStatement( parseIfStm );
+		parseIfStm.setCondition( new ExpressionStmt().setExpression( "left == null && right == null" ).getExpression() );
+		parseIfStm.setThenStmt( new BlockStmt().addStatement( "return null;" ) );
+		parseIfStm.setElseStmt( new BlockStmt().addStatement( "return new " + getLineage() + "(left, right);" ) );
+
+		lineage.push( "1" );
+		visit( typeChoiceDefinition.left() );
+		lineage.pop();
+
+		lineage.push( "2" );
+		visit( typeChoiceDefinition.right() );
+		lineage.pop();
+
+		compilationUnits.add( compilationUnit );
+	}
+
+
+	@Override
+	public void visit( InterfaceDefinition interfaceDefinition ) {
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.addImport( "jolie.runtime.JavaService" );
 		compilationUnit.addImport( "jolie.runtime.Value" );
@@ -577,8 +304,8 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 			methodDeclaration.addParameter( "Value", "value" );
 			BlockStmt methodBody = methodDeclaration.createBody();
 			TypeDefinition requestType = operation instanceof OneWayOperationDeclaration ?
-							( ( OneWayOperationDeclaration ) operation ).requestType()
-							: ( ( RequestResponseOperationDeclaration ) operation ).requestType();
+					( ( OneWayOperationDeclaration ) operation ).requestType()
+					: ( ( RequestResponseOperationDeclaration ) operation ).requestType();
 			switch ( requestType.name() ) {
 				case "void":
 					break;
@@ -633,120 +360,391 @@ public class JSDTVisitor implements OLVisitor< Void, Void > {
 			}
 		} );
 		compilationUnits.add( compilationUnit );
-		return null;
+	}
+
+
+	@Override
+	public void visit(Program n) {
+
 	}
 
 	@Override
-	public Void visit( DocumentationComment documentationComment, Void unused ) {
-		return null;
+	public void visit(OneWayOperationDeclaration decl) {
+
 	}
 
 	@Override
-	public Void visit( FreshValueExpressionNode freshValueExpressionNode, Void unused ) {
-		return null;
+	public void visit(RequestResponseOperationDeclaration decl) {
+
 	}
 
 	@Override
-	public Void visit( CourierDefinitionNode courierDefinitionNode, Void unused ) {
-		return null;
+	public void visit(DefinitionNode n) {
+
 	}
 
 	@Override
-	public Void visit( CourierChoiceStatement courierChoiceStatement, Void unused ) {
-		return null;
+	public void visit(ParallelStatement n) {
+
 	}
 
 	@Override
-	public Void visit( NotificationForwardStatement notificationForwardStatement, Void unused ) {
-		return null;
+	public void visit(SequenceStatement n) {
+
 	}
 
 	@Override
-	public Void visit( SolicitResponseForwardStatement solicitResponseForwardStatement, Void unused ) {
-		return null;
+	public void visit(NDChoiceStatement n) {
+
 	}
 
 	@Override
-	public Void visit( InterfaceExtenderDefinition interfaceExtenderDefinition, Void unused ) {
-		return null;
+	public void visit(OneWayOperationStatement n) {
+
 	}
 
 	@Override
-	public Void visit( InlineTreeExpressionNode inlineTreeExpressionNode, Void unused ) {
-		return null;
+	public void visit(RequestResponseOperationStatement n) {
+
 	}
 
 	@Override
-	public Void visit( VoidExpressionNode voidExpressionNode, Void unused ) {
-		return null;
+	public void visit(NotificationOperationStatement n) {
+
 	}
 
 	@Override
-	public Void visit( ProvideUntilStatement provideUntilStatement, Void unused ) {
-		return null;
+	public void visit(SolicitResponseOperationStatement n) {
+
 	}
 
 	@Override
-	public Void visit( TypeChoiceDefinition typeChoiceDefinition, Void unused ) {
-		visitedTypes.add( typeChoiceDefinition.name() );
-		CompilationUnit compilationUnit = new CompilationUnit();
-		compilationUnit.setPackageDeclaration( packageName );
+	public void visit(LinkInStatement n) {
 
-		compilationUnit.addImport( "jsdt.core.types.ChoiceType" );
-		compilationUnit.addImport( "jolie.runtime.Value" );
-
-		String leftClassName = typeChoiceDefinition.left() instanceof TypeDefinitionLink ?
-						( ( TypeDefinitionLink ) typeChoiceDefinition.left() ).linkedType().name()
-						: getLineage() + "_1";
-		String rightClassName = typeChoiceDefinition.right() instanceof TypeDefinitionLink ?
-						( ( TypeDefinitionLink ) typeChoiceDefinition.right() ).linkedType().name()
-						: getLineage() + "_2";
-
-		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( getLineage() )
-						.setModifier( Modifier.Keyword.PUBLIC, true )
-						.addExtendedType( "ChoiceType<" + leftClassName + ", " + rightClassName + ">" );
-		ConstructorDeclaration constructorDeclaration = theClass.addConstructor( Modifier.Keyword.PUBLIC );
-		constructorDeclaration.addParameter( leftClassName, "left" );
-		constructorDeclaration.addParameter( rightClassName, "right" );
-		BlockStmt constructorDeclarationBody = constructorDeclaration.createBody();
-		constructorDeclarationBody.addStatement( "super( left, right );" );
-
-		MethodDeclaration parseMethod = theClass.addMethod( "parse", Modifier.Keyword.PUBLIC, Modifier.Keyword.STATIC );
-		parseMethod.addParameter( "Value", "value" );
-		parseMethod.setType( new ClassOrInterfaceType().setName( getLineage() ) );
-		BlockStmt parseBody = parseMethod.createBody();
-		parseBody.addStatement( leftClassName + " left = " + leftClassName + ".parse( value );" );
-		parseBody.addStatement( rightClassName + " right = " + rightClassName + ".parse( value );" );
-		IfStmt parseIfStm = new IfStmt();
-		parseBody.addStatement( parseIfStm );
-		parseIfStm.setCondition( new ExpressionStmt().setExpression( "left == null && right == null" ).getExpression() );
-		parseIfStm.setThenStmt( new BlockStmt().addStatement( "return null;" ) );
-		parseIfStm.setElseStmt( new BlockStmt().addStatement( "return new " + getLineage() + "(left, right);" ) );
-
-		lineage.push( "1" );
-		visit( typeChoiceDefinition.left() );
-		lineage.pop();
-
-		lineage.push( "2" );
-		visit( typeChoiceDefinition.right() );
-		lineage.pop();
-
-		compilationUnits.add( compilationUnit );
-		return null;
 	}
 
 	@Override
-	public Void visit( ImportStatement importStatement, Void unused ) {
-		return null;
+	public void visit(LinkOutStatement n) {
+
 	}
 
 	@Override
-	public Void visit( ServiceNode serviceNode, Void unused ) {
-		return null;
+	public void visit(AssignStatement n) {
+
 	}
 
 	@Override
-	public Void visit( EmbedServiceNode embedServiceNode, Void unused ) {
-		return null;
+	public void visit(AddAssignStatement n) {
+
+	}
+
+	@Override
+	public void visit(SubtractAssignStatement n) {
+
+	}
+
+	@Override
+	public void visit(MultiplyAssignStatement n) {
+
+	}
+
+	@Override
+	public void visit(DivideAssignStatement n) {
+
+	}
+
+	@Override
+	public void visit(IfStatement n) {
+
+	}
+
+	@Override
+	public void visit(DefinitionCallStatement n) {
+
+	}
+
+	@Override
+	public void visit(WhileStatement n) {
+
+	}
+
+	@Override
+	public void visit(OrConditionNode n) {
+
+	}
+
+	@Override
+	public void visit(AndConditionNode n) {
+
+	}
+
+	@Override
+	public void visit(NotExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(CompareConditionNode n) {
+
+	}
+
+	@Override
+	public void visit(ConstantIntegerExpression n) {
+
+	}
+
+	@Override
+	public void visit(ConstantDoubleExpression n) {
+
+	}
+
+	@Override
+	public void visit(ConstantBoolExpression n) {
+
+	}
+
+	@Override
+	public void visit(ConstantLongExpression n) {
+
+	}
+
+	@Override
+	public void visit(ConstantStringExpression n) {
+
+	}
+
+	@Override
+	public void visit(ProductExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(SumExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(VariableExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(NullProcessStatement n) {
+
+	}
+
+	@Override
+	public void visit(Scope n) {
+
+	}
+
+	@Override
+	public void visit(InstallStatement n) {
+
+	}
+
+	@Override
+	public void visit(CompensateStatement n) {
+
+	}
+
+	@Override
+	public void visit(ThrowStatement n) {
+
+	}
+
+	@Override
+	public void visit(ExitStatement n) {
+
+	}
+
+	@Override
+	public void visit(ExecutionInfo n) {
+
+	}
+
+	@Override
+	public void visit(CorrelationSetInfo n) {
+
+	}
+
+	@Override
+	public void visit(InputPortInfo n) {
+
+	}
+
+	@Override
+	public void visit(OutputPortInfo n) {
+
+	}
+
+	@Override
+	public void visit(PointerStatement n) {
+
+	}
+
+	@Override
+	public void visit(DeepCopyStatement n) {
+
+	}
+
+	@Override
+	public void visit(RunStatement n) {
+
+	}
+
+	@Override
+	public void visit(UndefStatement n) {
+
+	}
+
+	@Override
+	public void visit(ValueVectorSizeExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(PreIncrementStatement n) {
+
+	}
+
+	@Override
+	public void visit(PostIncrementStatement n) {
+
+	}
+
+	@Override
+	public void visit(PreDecrementStatement n) {
+
+	}
+
+	@Override
+	public void visit(PostDecrementStatement n) {
+
+	}
+
+	@Override
+	public void visit(ForStatement n) {
+
+	}
+
+	@Override
+	public void visit(ForEachSubNodeStatement n) {
+
+	}
+
+	@Override
+	public void visit(ForEachArrayItemStatement n) {
+
+	}
+
+	@Override
+	public void visit(SpawnStatement n) {
+
+	}
+
+	@Override
+	public void visit(IsTypeExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(InstanceOfExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(TypeCastExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(SynchronizedStatement n) {
+
+	}
+
+	@Override
+	public void visit(CurrentHandlerStatement n) {
+
+	}
+
+	@Override
+	public void visit(EmbeddedServiceNode n) {
+
+	}
+
+	@Override
+	public void visit(InstallFixedVariableExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(VariablePathNode n) {
+
+	}
+
+	@Override
+	public void visit(DocumentationComment n) {
+
+	}
+
+	@Override
+	public void visit(FreshValueExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(CourierDefinitionNode n) {
+
+	}
+
+	@Override
+	public void visit(CourierChoiceStatement n) {
+
+	}
+
+	@Override
+	public void visit(NotificationForwardStatement n) {
+
+	}
+
+	@Override
+	public void visit(SolicitResponseForwardStatement n) {
+
+	}
+
+	@Override
+	public void visit(InterfaceExtenderDefinition n) {
+
+	}
+
+	@Override
+	public void visit(InlineTreeExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(VoidExpressionNode n) {
+
+	}
+
+	@Override
+	public void visit(ProvideUntilStatement n) {
+
+	}
+
+	@Override
+	public void visit(ImportStatement n) {
+
+	}
+
+	@Override
+	public void visit(ServiceNode n) {
+
+	}
+
+	@Override
+	public void visit(EmbedServiceNode n) {
+
 	}
 }
