@@ -38,7 +38,6 @@ import jolie.lang.parse.ast.courier.NotificationForwardStatement;
 import jolie.lang.parse.ast.courier.SolicitResponseForwardStatement;
 import jolie.lang.parse.ast.expression.*;
 import jolie.lang.parse.ast.types.*;
-import jolie.util.Pair;
 import jsdt.core.cardinality.Cardinalities;
 
 import java.util.*;
@@ -52,16 +51,17 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	private final List< CompilationUnit > compilationUnits = new LinkedList<>();;
 	private final String packageName;
-	private final Stack< String > lineage = new Stack<>();
-	private final Stack< Boolean > isUnionCase = new Stack<>();
+	private Stack< String > lineage = new Stack<>();
+	private Stack< Optional< String > > enclosingUnionName = new Stack<>();
 	private final Set< TypeDefinition > collectedInterfaceTypes = new HashSet<>();
 	private final Map< String, ServiceNode > serviceDeclarations = new HashMap<>();
 	private final Map< String, InterfaceDefinition > interfaceDeclarations = new HashMap<>();
 	private final Map< String, TypeDefinition > topLevelTypeDeclarations = new HashMap<>();
+	private static String UNDEFINED_VALUE = "Value.UNDEFINED_VALUE";
 
 	// Maps each imported symbol to its import statement
 	final Map< String, ImportStatement > importedSymbolsMap = new HashMap<>();
-	static private final Set< String > visitedTypes = new HashSet<>();
+	static private final Map< String, CompilationUnit > visitedTypes = new HashMap<>();
 
 	private JSDTVisitor(String packageName, Program p, String serviceName ) {
 		if ( serviceName != null ) {
@@ -72,6 +72,13 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	public static List< CompilationUnit > generateJavaServiceInterface( Program p, String serviceName, String packageName ) {
 		JSDTVisitor jsdt = new JSDTVisitor( packageName, p, serviceName );
+		jsdt.topLevelTypeDeclarations.values().forEach( typeDefinition -> {
+			StringJoiner j = new StringJoiner( " " );
+			j.add( "Top level type:" )
+					.add( typeDefinition.name() )
+					.add( typeDefinition.getClass().getSimpleName() );
+			System.out.println( j );
+		});
 		jsdt.serviceDeclarations.get( serviceName ).accept( jsdt );
 		return jsdt.compilationUnits;
 	}
@@ -100,7 +107,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 	public static List< CompilationUnit > generateTypeClasses( TypeDefinition ctx, String packageName ) {
 		JSDTVisitor jsdt = new JSDTVisitor( packageName, null, null );
 		jsdt.pushName( ctx.name() );
-		jsdt.visit( ctx );
+		ctx.accept( jsdt );
 		jsdt.popName();
 		return jsdt.compilationUnits;
 	}
@@ -115,7 +122,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 		JSDTVisitor jsdt = new JSDTVisitor(packageName, program, null);
 		jsdt.visit(ctx);
 		jsdt.collectedInterfaceTypes.forEach(td -> {
-			jsdt.compilationUnits.addAll(generateTypeClasses(td, packageName));
+			jsdt.compilationUnits.addAll( generateTypeClasses( td, packageName ) );
 		});
 		return jsdt.compilationUnits;
 	}
@@ -147,16 +154,20 @@ public class JSDTVisitor implements UnitOLVisitor {
 	}
 
 	private void pushName( String typeOrLabel ) {
-		pushName( typeOrLabel, false );
+		pushName( typeOrLabel, Optional.empty() );
 	}
 
-	private void pushName( String typeOrLabel, boolean isUnionCase ) {
+	private void pushName( String typeOrLabel, String unionName ) {
+		 pushName( typeOrLabel, Optional.ofNullable( unionName ) );
+	}
+
+	private void pushName( String typeOrLabel, Optional<String> unionName ){
 		lineage.push( normalizeName(typeOrLabel) );
-		this.isUnionCase.push( isUnionCase );
+		this.enclosingUnionName.push( unionName );
 	}
 
 	private String popName() {
-		isUnionCase.pop();
+		enclosingUnionName.pop();
 		return lineage.pop();
 	}
 
@@ -164,12 +175,34 @@ public class JSDTVisitor implements UnitOLVisitor {
 		return String.join( "", lineage );
 	}
 
+	private String getParentLineage() {
+		return String.join( "", lineage.subList(0, lineage.size() - 1 ) );
+	}
+
 	private boolean isUnionCase() {
-		return !isUnionCase.empty() && isUnionCase.peek();
+		return getPeekUnionName().isPresent();
+	}
+
+	private Optional< String > getPeekUnionName() {
+		return enclosingUnionName.isEmpty() ? Optional.empty() : enclosingUnionName.peek();
+	}
+
+	private boolean isTopLevelTypeDeclaration() {
+		return lineage.size() == 1;
+	}
+
+	private void runInNewLineageContext( Runnable runnable ){
+		final Stack< String > lineage = this.lineage;
+		final Stack< Optional< String > > enclosingUnionName = this.enclosingUnionName;
+		this.lineage = new Stack<>();
+		this.enclosingUnionName = new Stack<>();
+		runnable.run();
+		this.lineage = lineage;
+		this.enclosingUnionName = enclosingUnionName;
 	}
 
 
-	public void visit( TypeDefinition typeDefinition ) {
+	/* public void visit( TypeDefinition typeDefinition ) {
 		if ( typeDefinition instanceof TypeInlineDefinition ) {
 			visit( ( TypeInlineDefinition ) typeDefinition );
 		} else if ( typeDefinition instanceof TypeDefinitionLink ) {
@@ -179,23 +212,25 @@ public class JSDTVisitor implements UnitOLVisitor {
 		} else {
 			throw new RuntimeException( "Unrecognized " + typeDefinition.getClass() );
 		}
-	}
+	} */
 
 	@Override
 	public void visit( TypeInlineDefinition typeInlineDefinition ) {
-		// TODO: properly generate code for union cases
-		if ( typeInlineDefinition.name().equals( "undefined" ) ) {
-			return;
-		}
-		visitedTypes.add( typeInlineDefinition.name() );
+		// TODO: make constructor private
+		// TODO: make deafault contructor public
+		// TODO: put fields at top of class definition, maybe sort the body of the class
 		System.out.println( "Type Inline Definition: " + typeInlineDefinition.name() );
+
+		if ( (isTopLevelTypeDeclaration() && visitedTypes.containsKey( typeInlineDefinition.name() ) ) ||
+				typeInlineDefinition.name().equals( "undefined" ) ) {
+				return;
+		}
 		BasicTypeDefinition basicTypeDefinition = typeInlineDefinition.basicType();
 		Set< Map.Entry< String, TypeDefinition > > subNodes = typeInlineDefinition.subTypes();
 
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.setPackageDeclaration( packageName );
 
-		// compilationUnit.addImport( "jsdt.core.types.BasicType" );
 		compilationUnit.addImport( "jolie.runtime.Value" );
 
 		String javaNativeType = jolieToJavaType( basicTypeDefinition.nativeType() );
@@ -205,7 +240,12 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 		String className = getLineage();
 
-		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( className, Modifier.Keyword.PUBLIC );
+		ClassOrInterfaceDeclaration theClass = compilationUnit
+						.addClass( className, Modifier.Keyword.PUBLIC );
+
+		getPeekUnionName()
+				.ifPresent( unionTypeName -> addUnionTypeInterfaceImplementation( theClass, unionTypeName ) );
+
 		/*	Each generated class is composed by:
 			- some fields
 			- constructor
@@ -270,7 +310,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 				TypeDefinition node = nodeEntry.getValue();
 				pushName( nodeName );
 
-				visit( node );
+				node.accept( this );
 
 				Cardinalities cardinalityClass = getCardinalityClass( node.cardinality() );
 				// compilationUnit.addImport( "jsdt.core.cardinality." + cardinalityClass );
@@ -367,36 +407,69 @@ public class JSDTVisitor implements UnitOLVisitor {
 		toValueMethodBody.addStatement( "return value;" );
 
 		compilationUnits.add( compilationUnit );
+
+		if ( isTopLevelTypeDeclaration() && !isUnionCase() ) {
+			visitedTypes.put( typeInlineDefinition.name(), compilationUnit );
+		}
 	}
 
 	@Override
-	public void visit( TypeDefinitionLink typeDefinitionLink ) {
+	public void
+	visit( TypeDefinitionLink typeDefinitionLink ) {
 		// TODO: Properly generate typelinks, also for union cases
-		if( topLevelTypeDeclarations.containsKey( typeDefinitionLink.name() ) ) {
-			if( !visitedTypes.contains( typeDefinitionLink.name() ) ) {
-				visitedTypes.add( typeDefinitionLink.name() );
-				final String className = getLineage();
-				final String linkedTypeName = normalizeName( typeDefinitionLink.linkedTypeName() );
+		System.out.println( "Type Link Definition: " + typeDefinitionLink.name() + " " + typeDefinitionLink.linkedTypeName() );
+		if ( isTopLevelTypeDeclaration() && visitedTypes.containsKey( typeDefinitionLink.name() ) ) {
+			// In case this typeLink has already been generated, we must extend it with
+			// the implementation of the union type we are dealing with right now (if any)
+			// Need if the same type is being used in several unions
+			getPeekUnionName().ifPresent( enclosingUnionName -> visitedTypes
+					.get( typeDefinitionLink.name() )
+					// This is fine because it's a top level type definition
+					.getClassByName( normalizeName( typeDefinitionLink.name() ) )
+					.ifPresent( theClass ->
+							// TODO: Handle case of theClass being an interface
+							addUnionTypeInterfaceImplementation( theClass, enclosingUnionName )
+					) );
+			return;
+		}
 
-				final CompilationUnit compilationUnit = new CompilationUnit();
-				compilationUnit.setPackageDeclaration( packageName );
-				// compilationUnit.addImport( "jolie.runtime.Value" );
-				compilationUnit
-						.addClass( className )
-						.addExtendedType( linkedTypeName )
-						.setInterface( typeDefinitionLink.linkedType() instanceof TypeChoiceDefinition );
+		// TODO: Generate implementation of interface if link to a union type
+		// TODO: Generate protected copy constructor from super class. Todo: What if super class is an interface???
+		// TODO: Correctly generate parse method
+		if ( isTopLevelTypeDeclaration() ) {
+			final String classOrInterfaceName = getLineage();
+			final String linkedTypeName = normalizeName(typeDefinitionLink.linkedTypeName());
+			final CompilationUnit compilationUnit = new CompilationUnit();
+			compilationUnit.setPackageDeclaration(packageName);
+			compilationUnit.addImport("jolie.runtime.Value");
+			// Extend either the class or the interface of the linked type
+			ClassOrInterfaceDeclaration classOrInterfaceDeclaration = compilationUnit
+					.addClass(classOrInterfaceName)
+					.addExtendedType(linkedTypeName)
+					.setInterface(typeDefinitionLink.linkedType() instanceof TypeChoiceDefinition);
+			classOrInterfaceDeclaration
+					.addMethod("parse", Modifier.Keyword.STATIC, Modifier.Keyword.PUBLIC )
+					.setType( classOrInterfaceName )
+					.addParameter("Value", "value")
+					.createBody();
+			compilationUnits.add( compilationUnit );
+			if ( !isUnionCase() ) {
+				visitedTypes.put( typeDefinitionLink.name(), compilationUnit );
 			}
 		}
-		if ( !visitedTypes.contains( typeDefinitionLink.linkedType().name() ) ) {
-			visitedTypes.add( typeDefinitionLink.linkedType().name() );
-			this.compilationUnits.addAll(
-					JSDTVisitor.generateTypeClasses( typeDefinitionLink.linkedType(), packageName )
-			);
-		}
+
+		final Optional<String> unionName = getPeekUnionName();
+		runInNewLineageContext( () -> {
+			pushName( typeDefinitionLink.linkedTypeName(), unionName );
+			typeDefinitionLink.linkedType().accept( this );
+			popName(); // not needed beacuse context will be discarded anyway
+		} );
 	}
+
 
 	@Override
 	public void visit( TypeChoiceDefinition typeChoiceDefinition ) {
+		System.out.println( "Type Choice Definition: " + typeChoiceDefinition.name() );
 		/* TODO: https://stackoverflow.com/a/51092768
 		UnionType unionType = new TypeA();
 
@@ -454,6 +527,9 @@ public class JSDTVisitor implements UnitOLVisitor {
 		│   A   │   ◯───┼──────►│   B   │   C   │
 		└───────┴───────┘       └───────┴───────┘
 		*/
+		if ( isTopLevelTypeDeclaration() && visitedTypes.containsKey( typeChoiceDefinition. name() ) ) {
+			return;
+		}
 		TypeChoiceDefinition tdl = typeChoiceDefinition;
 		List<TypeDefinition> unionCases = new ArrayList<>(List.of(tdl.left()));
 		while ( tdl.right() instanceof TypeChoiceDefinition ) {
@@ -461,26 +537,13 @@ public class JSDTVisitor implements UnitOLVisitor {
 			unionCases.add( tdl.left() );
 		}
 		unionCases.add( tdl.right() );
-		visitedTypes.add( typeChoiceDefinition.name() );
+		// visitedTypes.add( typeChoiceDefinition.name() );
 		// Create UnionType interface
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.setPackageDeclaration( packageName );
 
 		/* old: */
 		compilationUnit.addImport( "jolie.runtime.Value" );
-
-		String leftClassName = typeChoiceDefinition.left() instanceof TypeDefinitionLink ?
-				( ( TypeDefinitionLink ) typeChoiceDefinition.left() ).linkedType().name()
-				: getLineage() + "_1";
-		String rightClassName = typeChoiceDefinition.right() instanceof TypeDefinitionLink ?
-				( ( TypeDefinitionLink ) typeChoiceDefinition.right() ).linkedType().name()
-				: getLineage() + "_2";
-
-
-		ClassOrInterfaceDeclaration theClass = new ClassOrInterfaceDeclaration()
-				.setName( getLineage() )
-				.setModifier( Modifier.Keyword.PUBLIC, true )
-				.addExtendedType( "ChoiceType<" + leftClassName + ", " + rightClassName + ">" );
 
 		/*
 		interface UnionType {
@@ -506,7 +569,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 				.setType( "Value" )
 				.removeBody();
 		BlockStmt parseBody = unionInterface
-				.addMethod( "parse" )
+				.addMethod( "parse", Modifier.Keyword.STATIC )
 				.setType( interfaceName )
 				.addParameter( "Value", "value")
 				.createBody();
@@ -532,7 +595,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 			unionCaseNumber += 1;
 			final String unionCaseName;
 			if( t instanceof TypeDefinitionLink ) {
-				unionCaseName = normalizeName(((TypeDefinitionLink)t).linkedTypeName());
+				unionCaseName = normalizeName( ( ( TypeDefinitionLink)t ).linkedTypeName() );
 			} else {
 				unionCaseName = interfaceName + "Case" + unionCaseNumber;
 			}
@@ -556,17 +619,36 @@ public class JSDTVisitor implements UnitOLVisitor {
 			 */
 			String parseCall = unionCaseName + ".parse( value );";
 			if ( unionCaseNumber < unionCases.size() ) {
-				parseBody.addStatement( "result = " +parseCall );
+				parseBody.addStatement( "result = " + parseCall );
 				parseBody.addStatement( returnResultIfNotNull );
 			} else {
 				parseBody.addStatement( "return " + parseCall );
 			}
 			// Generate compilation units for this case
-			pushName( unionCaseName, true );
+			pushName( t instanceof TypeInlineDefinition ? "Case" + unionCaseNumber : unionCaseName, interfaceName );
 			t.accept( this );
 			popName();
 		}
 		compilationUnits.add( compilationUnit );
+		if ( isTopLevelTypeDeclaration() ) {
+			visitedTypes.put( typeChoiceDefinition.name(), compilationUnit );
+		}
+	}
+
+	private void addUnionTypeInterfaceImplementation( ClassOrInterfaceDeclaration theClass, String interfaceName ) {
+		/* Add visitor method:
+			@Override
+			public <R> R when(UnionType.Cases<R> cases) {
+				return cases.is(this);
+			}
+		 */
+		theClass.addImplementedType( interfaceName );
+		theClass.addMethod( "when", Modifier.Keyword.PUBLIC )
+				.addAnnotation( "Override" )
+				.addTypeParameter( "R" )
+				.setType( "R" )
+				.addParameter( interfaceName + ".Cases<R>", "cases" )
+				.setBody( new BlockStmt().addStatement( "return cases.is( this );" ) );
 	}
 
 
@@ -582,7 +664,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 	}
 
 	@Override
-	public void visit(OneWayOperationDeclaration decl) {
+	public void visit( OneWayOperationDeclaration decl ) {
 		Optional.of( decl.requestType() ).stream()
 				.filter( Predicate.not(TypeInlineDefinition.class::isInstance) )
 				.findFirst()
@@ -594,7 +676,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 	}
 
 	@Override
-	public void visit(RequestResponseOperationDeclaration decl) {
+	public void visit( RequestResponseOperationDeclaration decl ) {
 		Optional.of( decl.requestType() )
 				.filter( Predicate.not(TypeInlineDefinition.class::isInstance) )
 				.ifPresent( type -> {
