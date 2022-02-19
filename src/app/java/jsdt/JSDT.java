@@ -47,6 +47,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
 
@@ -108,28 +109,33 @@ public class JSDT implements Callable< Integer > {
 							configuration,
 							true );
 
-			packageName = ( packageName == null ) ? symbolName : packageName;
+			packageName = ( packageName == null ) ? symbolName : packageName + "." + symbolName;
 			final List< CompilationUnit > compilationUnits = new LinkedList<>();
 			if ( targetIsType ) {
+				if ( true )
+					return 0;
 				program.children().stream()
 								.filter( c -> c instanceof TypeDefinition && ( ( TypeDefinition ) c ).name().equals( symbolName ) )
 								.findAny().ifPresent( node -> {
 					compilationUnits.addAll( JSDTVisitor.generateTypeClasses( ( TypeDefinition ) node, packageName ) );
 				} );
 			} else {
-				program.children().stream()
+				compilationUnits.addAll( JSDTVisitor.generateJavaServiceInterface( program, symbolName, packageName ) );
+				/* program.children().stream()
 								.filter( c -> c instanceof InterfaceDefinition && ( ( InterfaceDefinition ) c ).name().equals( symbolName ) )
 								.findAny().ifPresent( node -> {
 									compilationUnits.addAll( compileTypes ?
-													JSDTVisitor.generateInterfaceAndTypeClasses( ( InterfaceDefinition ) node, packageName )
-													: JSDTVisitor.generateInterfaceClass( ( InterfaceDefinition ) node, packageName )
+													JSDTVisitor.generateInterfaceAndTypeClasses( ( InterfaceDefinition ) node, program, packageName )
+													: JSDTVisitor.generateInterfaceClass( ( InterfaceDefinition ) node, program, packageName )
 									);
 								}
 				);
+				 */
 				if ( compilationUnits.isEmpty() ) {
 					System.err.println( "No classes have been generated. Please, check the input file and the launch parameters." );
 				} else {
-					Path destinationPath = Path.of( dstDir ).resolve( packageName );
+					Path destinationPath = Path.of( dstDir )
+							.resolve( packageName.replaceAll("\\.", Matcher.quoteReplacement( File.separator ) ) );
 					Files.createDirectories( destinationPath );
 					for ( CompilationUnit cu : compilationUnits ) {
 						if ( cu.getTypes().size() > 1 ) {

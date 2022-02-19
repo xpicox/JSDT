@@ -23,13 +23,11 @@ package jsdt.JSDTVisitor;
 
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.ConstructorDeclaration;
-import com.github.javaparser.ast.body.FieldDeclaration;
-import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.*;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
+import com.github.javaparser.ast.stmt.ReturnStmt;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
 import jolie.lang.NativeType;
 import jolie.lang.parse.UnitOLVisitor;
@@ -40,53 +38,136 @@ import jolie.lang.parse.ast.courier.NotificationForwardStatement;
 import jolie.lang.parse.ast.courier.SolicitResponseForwardStatement;
 import jolie.lang.parse.ast.expression.*;
 import jolie.lang.parse.ast.types.*;
+import jolie.util.Pair;
 import jsdt.core.cardinality.Cardinalities;
 
 import java.util.*;
+import java.util.function.Predicate;
+import java.util.regex.MatchResult;
+import java.util.regex.Pattern;
 
 import static jsdt.JSDTVisitor.JSDTVisitorUtils.*;
 
 public class JSDTVisitor implements UnitOLVisitor {
 
-	private final List< CompilationUnit > compilationUnits;
+	private final List< CompilationUnit > compilationUnits = new LinkedList<>();;
 	private final String packageName;
-	private final Stack< String > lineage;
-	private final Set< TypeDefinition > collectedInterfaceTypes;
+	private final Stack< String > lineage = new Stack<>();
+	private final Stack< Boolean > isUnionCase = new Stack<>();
+	private final Set< TypeDefinition > collectedInterfaceTypes = new HashSet<>();
+	private final Map< String, ServiceNode > serviceDeclarations = new HashMap<>();
+	private final Map< String, InterfaceDefinition > interfaceDeclarations = new HashMap<>();
+	private final Map< String, TypeDefinition > topLevelTypeDeclarations = new HashMap<>();
+
+	// Maps each imported symbol to its import statement
+	final Map< String, ImportStatement > importedSymbolsMap = new HashMap<>();
 	static private final Set< String > visitedTypes = new HashSet<>();
 
-	private JSDTVisitor(String packageName ) {
-		this.compilationUnits = new LinkedList<>();
-		this.lineage = new Stack<>();
+	private JSDTVisitor(String packageName, Program p, String serviceName ) {
+		if ( serviceName != null ) {
+			collectTopLevelDeclarations( p );
+		}
 		this.packageName = packageName;
-		this.collectedInterfaceTypes = new HashSet<>();
+	}
+
+	public static List< CompilationUnit > generateJavaServiceInterface( Program p, String serviceName, String packageName ) {
+		JSDTVisitor jsdt = new JSDTVisitor( packageName, p, serviceName );
+		jsdt.serviceDeclarations.get( serviceName ).accept( jsdt );
+		return jsdt.compilationUnits;
+	}
+
+	private void collectTopLevelDeclarations( Program program ) {
+		for( OLSyntaxNode n : program.children() ) {
+			if( n instanceof ImportStatement ) {
+				ImportStatement is = (ImportStatement) n;
+				ImportSymbolTarget[] importedSymbols = is.importSymbolTargets();
+				for( ImportSymbolTarget ist : importedSymbols ) {
+					importedSymbolsMap.put( ist.localSymbolName(), is );
+				}
+			} else if ( n instanceof TypeDefinition ) {
+				TypeDefinition td = (TypeDefinition) n;
+				topLevelTypeDeclarations.put( td.name(), td);
+			} else if ( n instanceof ServiceNode ) {
+				ServiceNode s = (ServiceNode) n;
+				serviceDeclarations.put( s.name(), s );
+			} else if ( n instanceof InterfaceDefinition ) {
+				InterfaceDefinition id = (InterfaceDefinition) n;
+				interfaceDeclarations.put( id.name(), id );
+			}
+		}
 	}
 
 	public static List< CompilationUnit > generateTypeClasses( TypeDefinition ctx, String packageName ) {
-		JSDTVisitor jsdt = new JSDTVisitor( packageName );
-		jsdt.lineage.push( ctx.name() );
+		JSDTVisitor jsdt = new JSDTVisitor( packageName, null, null );
+		jsdt.pushName( ctx.name() );
 		jsdt.visit( ctx );
-		jsdt.lineage.pop();
+		jsdt.popName();
 		return jsdt.compilationUnits;
 	}
 
-	public static List< CompilationUnit > generateInterfaceClass( InterfaceDefinition ctx, String packageName ) {
-		JSDTVisitor jsdt = new JSDTVisitor( packageName );
+	public static List< CompilationUnit > generateInterfaceClass(InterfaceDefinition ctx, Program program, String packageName) {
+		JSDTVisitor jsdt = new JSDTVisitor( packageName, program, null );
 		jsdt.visit( ctx );
 		return jsdt.compilationUnits;
 	}
 
-	public static List< CompilationUnit > generateInterfaceAndTypeClasses( InterfaceDefinition ctx, String packageName ) {
-		JSDTVisitor jsdt = new JSDTVisitor( packageName );
-		jsdt.visit( ctx );
-		jsdt.collectedInterfaceTypes.forEach( td -> {
-			jsdt.compilationUnits.addAll( generateTypeClasses( td, packageName ) );
-		} );
+	public static List< CompilationUnit > generateInterfaceAndTypeClasses(InterfaceDefinition ctx, Program program, String packageName) {
+		JSDTVisitor jsdt = new JSDTVisitor(packageName, program, null);
+		jsdt.visit(ctx);
+		jsdt.collectedInterfaceTypes.forEach(td -> {
+			jsdt.compilationUnits.addAll(generateTypeClasses(td, packageName));
+		});
 		return jsdt.compilationUnits;
+	}
+
+	static private String normalizeName( String typeOrLabel ) {
+		StringBuilder cammelCase = new StringBuilder(typeOrLabel);
+		cammelCase.replace(0,1, typeOrLabel.substring(0,1).toUpperCase(Locale.ROOT) );
+		Pattern.compile("_+")
+				.matcher( typeOrLabel )
+				.results()
+				// Process matches backwards, otherwise we screw up indexes
+				.sorted( Comparator.comparing( MatchResult::start ) )
+				// Discard match if it is the last character
+				.dropWhile( matchResult -> matchResult.end() >= typeOrLabel.length() )
+				.forEach( matchResult -> {
+					String charAfterUnderscore = typeOrLabel
+							.substring( matchResult.end(), matchResult.end()+1 );
+					String upperCaseChar = charAfterUnderscore
+							.toUpperCase(Locale.ROOT);
+					/* TODO: Use this mangling to get an injective transformation:
+					String replacementString = "U".repeat( matchResult.end() - matchResult.start() ) // replace _ for U
+							+ ( charAfterUnderscore.equals(upperCaseChar) ? "U" : "" ) // add a U if char was uppercase
+							+ upperCaseChar;
+					 */
+					// Delete dash and uppercase next char
+					cammelCase.replace(matchResult.start(), matchResult.end()+1, upperCaseChar);
+				} );
+		return cammelCase.toString();
+	}
+
+	private void pushName( String typeOrLabel ) {
+		pushName( typeOrLabel, false );
+	}
+
+	private void pushName( String typeOrLabel, boolean isUnionCase ) {
+		lineage.push( normalizeName(typeOrLabel) );
+		this.isUnionCase.push( isUnionCase );
+	}
+
+	private String popName() {
+		isUnionCase.pop();
+		return lineage.pop();
 	}
 
 	private String getLineage() {
-		return String.join( "_", lineage );
+		return String.join( "", lineage );
 	}
+
+	private boolean isUnionCase() {
+		return !isUnionCase.empty() && isUnionCase.peek();
+	}
+
 
 	public void visit( TypeDefinition typeDefinition ) {
 		if ( typeDefinition instanceof TypeInlineDefinition ) {
@@ -102,17 +183,19 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit( TypeInlineDefinition typeInlineDefinition ) {
+		// TODO: properly generate code for union cases
 		if ( typeInlineDefinition.name().equals( "undefined" ) ) {
 			return;
 		}
 		visitedTypes.add( typeInlineDefinition.name() );
+		System.out.println( "Type Inline Definition: " + typeInlineDefinition.name() );
 		BasicTypeDefinition basicTypeDefinition = typeInlineDefinition.basicType();
 		Set< Map.Entry< String, TypeDefinition > > subNodes = typeInlineDefinition.subTypes();
 
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.setPackageDeclaration( packageName );
 
-		compilationUnit.addImport( "jsdt.core.types.BasicType" );
+		// compilationUnit.addImport( "jsdt.core.types.BasicType" );
 		compilationUnit.addImport( "jolie.runtime.Value" );
 
 		String javaNativeType = jolieToJavaType( basicTypeDefinition.nativeType() );
@@ -120,28 +203,45 @@ public class JSDTVisitor implements UnitOLVisitor {
 			compilationUnit.addImport( "jolie.runtime.ByteArray" );
 		}
 
-		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( getLineage() )
-				.setModifier( Modifier.Keyword.PUBLIC, true )
-				.addExtendedType( "BasicType<" + javaNativeType + ">" );
+		String className = getLineage();
 
+		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( className, Modifier.Keyword.PUBLIC );
+		/*	Each generated class is composed by:
+			- some fields
+			- constructor
+			- parse method
+			- toValue method
+		 */
+		// Constructor
 		ConstructorDeclaration constructorDeclaration = theClass.addConstructor( Modifier.Keyword.PUBLIC );
 		BlockStmt constructorDeclarationBody = constructorDeclaration.createBody();
+		if ( !basicTypeDefinition.nativeType().equals( NativeType.VOID ) ) {
 
+		}
+
+		// toValue
+		MethodDeclaration toValueMethod = theClass.addMethod( "toValue", Modifier.Keyword.PUBLIC );
+		BlockStmt toValueMethodBody = toValueMethod.createBody();
+		toValueMethodBody.addStatement( "Value value = Value.create();" );
+		if ( !basicTypeDefinition.nativeType().equals( NativeType.VOID ) ) {
+			toValueMethodBody.addStatement( "value.setValue( root );" );
+		}
+
+		// toValueMethodBody.addStatement( "Value value = super.toValue();" );
+		toValueMethod.setType( "Value" );
+
+		// parse
 		MethodDeclaration parseMethod = theClass.addMethod( "parse", Modifier.Keyword.PUBLIC, Modifier.Keyword.STATIC );
 		parseMethod.addParameter( "Value", "value" );
 
-		MethodDeclaration toValueMethod = theClass.addMethod( "toValue", Modifier.Keyword.PUBLIC );
-		BlockStmt toValueMethodBody = toValueMethod.createBody();
-		toValueMethodBody.addStatement( "Value value = super.toValue();" );
-		toValueMethod.setType( "Value" );
-
+		// TODO: Move logically
 		StringJoiner parseReturnParameters = new StringJoiner( ", " );
 		if ( !basicTypeDefinition.nativeType().equals( NativeType.VOID ) ) {
 			parseReturnParameters.add(
 					jolieToGetValueOptional( basicTypeDefinition.nativeType() ).isEmpty() ? "value" : "value." + jolieToGetValueOptional( basicTypeDefinition.nativeType() ).get() + "()" );
 		}
 
-		parseMethod.setType( new ClassOrInterfaceType().setName( getLineage() ) );
+		parseMethod.setType( new ClassOrInterfaceType().setName( className ) );
 		BlockStmt parseBody = parseMethod.createBody();
 		IfStmt parseIfStm = new IfStmt();
 		parseBody.addStatement( parseIfStm );
@@ -149,78 +249,118 @@ public class JSDTVisitor implements UnitOLVisitor {
 				.setExpression( "value != null"
 						+ ( jolieToIsValue( basicTypeDefinition.nativeType() ).isEmpty() ? "" : " && value." + jolieToIsValue( basicTypeDefinition.nativeType() ).get() + "()" ) )
 				.getExpression() );
-		BlockStmt ifBranch = new BlockStmt();
 		parseIfStm.setElseStmt( new BlockStmt().addStatement( "return null;" ) );
+		BlockStmt ifBranch = new BlockStmt();
 		parseIfStm.setThenStmt( ifBranch );
 
 		if ( !basicTypeDefinition.nativeType().equals( NativeType.VOID ) ) {
-			constructorDeclaration.addParameter( jolieToJavaType( basicTypeDefinition.nativeType() ), "root" );
-			constructorDeclarationBody.addStatement( "super( root );" );
-		} else {
-			constructorDeclarationBody.addStatement( "super( null );" );
+			constructorDeclaration.addParameter( javaNativeType, "root" );
+			FieldDeclaration field = theClass.addField(
+					javaNativeType,
+					"root",
+					Modifier.Keyword.PRIVATE, Modifier.Keyword.FINAL
+			);
+			field.createGetter().setName( "root" );
+			constructorDeclarationBody.addStatement( "this.root = root;" );
 		}
 		if ( subNodes != null && !subNodes.isEmpty() ) {
 
 			subNodes.forEach( nodeEntry -> {
 				String nodeName = nodeEntry.getKey();
 				TypeDefinition node = nodeEntry.getValue();
-				lineage.push( nodeName );
+				pushName( nodeName );
 
 				visit( node );
 
 				Cardinalities cardinalityClass = getCardinalityClass( node.cardinality() );
-				compilationUnit.addImport( "jsdt.core.cardinality." + cardinalityClass );
+				// compilationUnit.addImport( "jsdt.core.cardinality." + cardinalityClass );
 				if ( cardinalityClass.equals( Cardinalities.Multi ) ) {
 					compilationUnit.addImport( "java.util.stream.Collectors" );
+					compilationUnit.addImport( "java.util.List");
+					compilationUnit.addImport( "java.util.Optional" );
+				} else if (cardinalityClass.equals( Cardinalities.MaybeSingle ) ) {
+					compilationUnit.addImport( "java.util.Optional" );
 				}
+
 				String fieldTypeName = node instanceof TypeDefinitionLink ? ( ( TypeDefinitionLink ) node ).linkedTypeName() : getLineage();
 				switch ( fieldTypeName ) {
 					case "undefined":
 					case "any":
 						fieldTypeName = "Value";
 				}
+				fieldTypeName = normalizeName(fieldTypeName);
+				String decoratedFieldTypeName = null;
+				switch ( cardinalityClass ) {
+					case Single:
+						decoratedFieldTypeName = fieldTypeName;
+						break;
+					case MaybeSingle:
+						decoratedFieldTypeName = "Optional<" + fieldTypeName +">";
+						break;
+					case Multi:
+						decoratedFieldTypeName = fieldTypeName.equals("Value") ? fieldTypeName : "Optional<" + fieldTypeName + ">";
+						decoratedFieldTypeName = "List<" + decoratedFieldTypeName + ">";
+						break;
+				}
 				FieldDeclaration field = theClass.addField(
-						cardinalityClass + "<" + fieldTypeName + ">",
+						decoratedFieldTypeName,
 						nodeName,
 						Modifier.Keyword.PRIVATE, Modifier.Keyword.FINAL
 				);
-				constructorDeclaration.addParameter( field.getCommonType(), nodeName );
+				constructorDeclaration.addParameter( decoratedFieldTypeName, nodeName );
 				constructorDeclarationBody.addStatement( "this." + nodeName + "=" + nodeName + ";" );
 				field.createGetter().setName( nodeName );
+				// TODO: go on from here
 				StringJoiner s = new StringJoiner( " " );
 				if ( cardinalityClass.equals( Cardinalities.Multi ) ) {
-					s.add( cardinalityClass + "<" + fieldTypeName + ">" )
+					s // .add( cardinalityClass + "<" + fieldTypeName + ">" )
+							.add( decoratedFieldTypeName )
 							.add( nodeName )
 							.add( "=" )
-							.add( cardinalityClass + ".of( value.getChildren(" )
+							.add( "value.getChildren(" )
 							.add( "\"" + nodeName + "\"" );
 					if ( !fieldTypeName.equals( "Value" ) ) {
 						s.add( ").stream().map(" )
-								.add( fieldTypeName + "::parse" );
+								.add( fieldTypeName + "::parse ).map(" )
+								.add( "Optional::ofNullable" )
+								.add( ").collect( Collectors.toList() );" );
 					} else {
-						s.add( ").stream(" );
+						s.add( ").values();" );
 					}
-					s.add( ").collect( Collectors.toList() ) );" );
 				} else {
-					s.add( cardinalityClass + "<" + fieldTypeName + ">" )
+					String childGetter = "value.getFirstChild( \"" + nodeName + "\" )";
+					s.add( decoratedFieldTypeName )
 							.add( nodeName )
-							.add( "=" )
-							.add( cardinalityClass + ".of(" );
-					if ( fieldTypeName.equals( "Value" ) ) {
-						s.add( "value.getChildren(" )
-								.add( "\"" + nodeName + "\"" )
-								.add( ").get( 0 ) );" );
+							.add( "=" );
+					if ( cardinalityClass.equals( Cardinalities.MaybeSingle ) ) {
+						StringJoiner condition = new StringJoiner( " " );
+						condition.add( "value.getChildren().isEmpty ?")
+								.add( "Optional.empty() :"  )
+								.add( "Optional.of(" );
+						if ( !fieldTypeName.equals( "Value" ) ) {
+							condition.add(fieldTypeName + ".parse(")
+									.add(childGetter)
+									.add(") );");
+						} else {
+							condition.add(childGetter).add( ");");
+						}
+						s.add( condition.toString());
 					} else {
-						s.add( fieldTypeName + ".parse(" )
-								.add( "value.getChildren(" )
-								.add( "\"" + nodeName + "\"" )
-								.add( ").get( 0 ) ) );" );
+						if ( fieldTypeName.equals( "Value" ) ) {
+							s.add( childGetter + ";" );
+						} else {
+							s.add( fieldTypeName + ".parse(" )
+									.add( childGetter )
+									.add( ");" );
+						}
 					}
 				}
+				// System.out.println( s.toString() );
 				ifBranch.addStatement( s.toString() );
 				parseReturnParameters.add( nodeName );
-				toValueMethodBody.addStatement( "this." + nodeName + "().addChildenIfNotEmpty(\"" + nodeName + "\", value);" );
-				lineage.pop();
+				// TODO: correctly generate toValue code
+				// toValueMethodBody.addStatement( "this." + nodeName + "().addChildenIfNotEmpty(\"" + nodeName + "\", value);" );
+				popName();
 			} );
 		}
 		ifBranch.addStatement( "return new " + getLineage() + "(" + parseReturnParameters + ");" );
@@ -231,6 +371,22 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit( TypeDefinitionLink typeDefinitionLink ) {
+		// TODO: Properly generate typelinks, also for union cases
+		if( topLevelTypeDeclarations.containsKey( typeDefinitionLink.name() ) ) {
+			if( !visitedTypes.contains( typeDefinitionLink.name() ) ) {
+				visitedTypes.add( typeDefinitionLink.name() );
+				final String className = getLineage();
+				final String linkedTypeName = normalizeName( typeDefinitionLink.linkedTypeName() );
+
+				final CompilationUnit compilationUnit = new CompilationUnit();
+				compilationUnit.setPackageDeclaration( packageName );
+				// compilationUnit.addImport( "jolie.runtime.Value" );
+				compilationUnit
+						.addClass( className )
+						.addExtendedType( linkedTypeName )
+						.setInterface( typeDefinitionLink.linkedType() instanceof TypeChoiceDefinition );
+			}
+		}
 		if ( !visitedTypes.contains( typeDefinitionLink.linkedType().name() ) ) {
 			visitedTypes.add( typeDefinitionLink.linkedType().name() );
 			this.compilationUnits.addAll(
@@ -241,11 +397,76 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit( TypeChoiceDefinition typeChoiceDefinition ) {
+		/* TODO: https://stackoverflow.com/a/51092768
+		UnionType unionType = new TypeA();
+
+		Integer count = unionType.when(new UnionType.Cases<Integer>() {
+    	@Override
+    	public Integer is(TypeA typeA) {
+        // TypeA-specific handling code
+    	}
+
+    	@Override
+    	public Integer is(TypeB typeB) {
+        	// TypeB-specific handling code
+    	}
+		});
+
+		boilerplate code:
+
+		interface UnionType {
+			<R> R when(Cases<R> c);
+
+			interface Cases<R> {
+				R is(TypeA typeA);
+				R is(TypeB typeB);
+			}
+		}
+
+		class TypeA implements UnionType {
+
+			// ... TypeA-specific code ...
+
+			@Override
+			public <R> R when(Cases<R> cases) {
+				return cases.is(this);
+			}
+		}
+
+		class TypeB implements UnionType {
+
+			// ... TypeB-specific code ...
+
+			@Override
+			public <R> R when(Cases<R> cases) {
+				return cases.is(this);
+			}
+		}
+		*/
+
+		/*
+		Collect all alternatives of a TypeChoice.
+		This code relies on the current encoding of TypeChoices in the Jolie AST, i.e.,
+		TypeChoiceDefinitions (TDC) are like cons cells of lisp, and an AST for the type
+		A | B | C will have the following shape:
+		       TDC                     TDC
+		┌───────┬───────┐       ┌───────┬───────┐
+		│   A   │   ◯───┼──────►│   B   │   C   │
+		└───────┴───────┘       └───────┴───────┘
+		*/
+		TypeChoiceDefinition tdl = typeChoiceDefinition;
+		List<TypeDefinition> unionCases = new ArrayList<>(List.of(tdl.left()));
+		while ( tdl.right() instanceof TypeChoiceDefinition ) {
+			tdl = (TypeChoiceDefinition) tdl.right();
+			unionCases.add( tdl.left() );
+		}
+		unionCases.add( tdl.right() );
 		visitedTypes.add( typeChoiceDefinition.name() );
+		// Create UnionType interface
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.setPackageDeclaration( packageName );
 
-		compilationUnit.addImport( "jsdt.core.types.ChoiceType" );
+		/* old: */
 		compilationUnit.addImport( "jolie.runtime.Value" );
 
 		String leftClassName = typeChoiceDefinition.left() instanceof TypeDefinitionLink ?
@@ -255,111 +476,103 @@ public class JSDTVisitor implements UnitOLVisitor {
 				( ( TypeDefinitionLink ) typeChoiceDefinition.right() ).linkedType().name()
 				: getLineage() + "_2";
 
-		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( getLineage() )
+
+		ClassOrInterfaceDeclaration theClass = new ClassOrInterfaceDeclaration()
+				.setName( getLineage() )
 				.setModifier( Modifier.Keyword.PUBLIC, true )
 				.addExtendedType( "ChoiceType<" + leftClassName + ", " + rightClassName + ">" );
-		ConstructorDeclaration constructorDeclaration = theClass.addConstructor( Modifier.Keyword.PUBLIC );
-		constructorDeclaration.addParameter( leftClassName, "left" );
-		constructorDeclaration.addParameter( rightClassName, "right" );
-		BlockStmt constructorDeclarationBody = constructorDeclaration.createBody();
-		constructorDeclarationBody.addStatement( "super( left, right );" );
 
-		MethodDeclaration parseMethod = theClass.addMethod( "parse", Modifier.Keyword.PUBLIC, Modifier.Keyword.STATIC );
-		parseMethod.addParameter( "Value", "value" );
-		parseMethod.setType( new ClassOrInterfaceType().setName( getLineage() ) );
-		BlockStmt parseBody = parseMethod.createBody();
-		parseBody.addStatement( leftClassName + " left = " + leftClassName + ".parse( value );" );
-		parseBody.addStatement( rightClassName + " right = " + rightClassName + ".parse( value );" );
-		IfStmt parseIfStm = new IfStmt();
-		parseBody.addStatement( parseIfStm );
-		parseIfStm.setCondition( new ExpressionStmt().setExpression( "left == null && right == null" ).getExpression() );
-		parseIfStm.setThenStmt( new BlockStmt().addStatement( "return null;" ) );
-		parseIfStm.setElseStmt( new BlockStmt().addStatement( "return new " + getLineage() + "(left, right);" ) );
+		/*
+		interface UnionType {
+			<R> R when(Cases<R> c);
 
-		lineage.push( "1" );
-		visit( typeChoiceDefinition.left() );
-		lineage.pop();
+			interface Cases<R> {
+				R is(TypeA typeA);
+				R is(TypeB typeB);
+			}
+		}
+		 */
+		String interfaceName = getLineage();
+		ClassOrInterfaceDeclaration unionInterface = compilationUnit.addInterface( interfaceName )
+				.setModifier( Modifier.Keyword.PUBLIC, true );
+		unionInterface
+				.addMethod("when" )
+				.addTypeParameter( "R" )
+				.setType( "R" )
+				.addParameter( "Cases<R>", "c")
+				.removeBody();
+		unionInterface
+				.addMethod( "toValue" )
+				.setType( "Value" )
+				.removeBody();
+		BlockStmt parseBody = unionInterface
+				.addMethod( "parse" )
+				.setType( interfaceName )
+				.addParameter( "Value", "value")
+				.createBody();
+		parseBody.addStatement( new StringJoiner( " ")
+				.add(interfaceName)
+				.add( "result = null;")
+				.toString());
 
-		lineage.push( "2" );
-		visit( typeChoiceDefinition.right() );
-		lineage.pop();
+		ClassOrInterfaceDeclaration casesInterface =
+				new ClassOrInterfaceDeclaration()
+						.setInterface( true )
+						.setName( "Cases" )//  , true,"Cases")
+						.addTypeParameter("R");
+		unionInterface.addMember( casesInterface );
 
+		// used in parseBody
+		IfStmt returnResultIfNotNull = new IfStmt()
+				.setCondition( new ExpressionStmt().setExpression( "result != null" ).getExpression() )
+				.setThenStmt( new ReturnStmt("result") );
+
+		int unionCaseNumber = 0;
+		for ( TypeDefinition t : unionCases ) {
+			unionCaseNumber += 1;
+			final String unionCaseName;
+			if( t instanceof TypeDefinitionLink ) {
+				unionCaseName = normalizeName(((TypeDefinitionLink)t).linkedTypeName());
+			} else {
+				unionCaseName = interfaceName + "Case" + unionCaseNumber;
+			}
+			casesInterface
+					.addMethod( "is" )
+					.setType( "R" )
+					.addParameter( unionCaseName, "v" )
+					.removeBody();
+			/*
+			parseBody.addStatement( new AssignExpr()
+					.setOperator( AssignExpr.Operator.ASSIGN)
+					.setTarget( new NameExpr("result") )
+					.setValue( new MethodCallExpr(
+							new NameExpr(caseName),
+							"parse",
+							NodeList.nodeList( new NameExpr("value") ) ) ) );
+			 */
+			/*
+			Generation of parse body which does not handle overlapping unions,
+			since it returns the first successful parse.
+			 */
+			String parseCall = unionCaseName + ".parse( value );";
+			if ( unionCaseNumber < unionCases.size() ) {
+				parseBody.addStatement( "result = " +parseCall );
+				parseBody.addStatement( returnResultIfNotNull );
+			} else {
+				parseBody.addStatement( "return " + parseCall );
+			}
+			// Generate compilation units for this case
+			pushName( unionCaseName, true );
+			t.accept( this );
+			popName();
+		}
 		compilationUnits.add( compilationUnit );
 	}
 
 
 	@Override
 	public void visit( InterfaceDefinition interfaceDefinition ) {
-		CompilationUnit compilationUnit = new CompilationUnit();
-		compilationUnit.addImport( "jolie.runtime.JavaService" );
-		compilationUnit.addImport( "jolie.runtime.Value" );
-		compilationUnit.setPackageDeclaration( packageName );
-		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( interfaceDefinition.name() + "Service" );
-		theClass.setModifier( Modifier.Keyword.PUBLIC, true );
-		theClass.addExtendedType( "JavaService" );
-		interfaceDefinition.operationsMap().forEach( ( name, operation ) -> {
-			MethodDeclaration methodDeclaration = theClass.addMethod( name );
-			// we do not set the type of the method, since, if it is not set, it defaults to void
-			methodDeclaration.setModifiers( Modifier.Keyword.PUBLIC );
-			methodDeclaration.addParameter( "Value", "value" );
-			BlockStmt methodBody = methodDeclaration.createBody();
-			TypeDefinition requestType = operation instanceof OneWayOperationDeclaration ?
-					( ( OneWayOperationDeclaration ) operation ).requestType()
-					: ( ( RequestResponseOperationDeclaration ) operation ).requestType();
-			switch ( requestType.name() ) {
-				case "void":
-					break;
-				case "bool":
-					methodBody.addStatement( "boolean request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				case "int":
-					methodBody.addStatement( "int request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				case "double":
-					methodBody.addStatement( "double request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				case "long":
-					methodBody.addStatement( "long request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				case "string":
-					methodBody.addStatement( "String request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				case "raw":
-					compilationUnit.addImport( "jolie.runtime.ByteArray" );
-					methodBody.addStatement( "ByteArray request = value." + jolieToGetValue( requestType.name() ) + "();" );
-					break;
-				default:
-					switch ( requestType.name() ) {
-						case "any":
-						case "undefined":
-							break;
-						default:
-							collectedInterfaceTypes.add( requestType );
-							methodBody.addStatement( requestType.name() + " request = " + requestType.name() + ".parse( value );" );
-					}
-			}
-			if ( operation instanceof RequestResponseOperationDeclaration ) {
-				compilationUnit.addImport( "jolie.runtime.embedding.RequestResponse" );
-				methodDeclaration.addAnnotation( "RequestResponse" );
-				TypeDefinition responseType = ( ( RequestResponseOperationDeclaration ) operation ).responseType();
-				switch ( responseType.name() ) {
-					case "void":
-					case "bool":
-					case "int":
-					case "double":
-					case "long":
-					case "string":
-					case "raw":
-					case "any":
-					case "undefined":
-						break;
-					default:
-						collectedInterfaceTypes.add( responseType );
-				}
-				methodDeclaration.setType( "Value" );
-			}
-		} );
-		compilationUnits.add( compilationUnit );
+		interfaceDefinition.operationsMap().values().forEach( op -> op.accept( this ) );
 	}
 
 
@@ -370,12 +583,32 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit(OneWayOperationDeclaration decl) {
-
+		Optional.of( decl.requestType() ).stream()
+				.filter( Predicate.not(TypeInlineDefinition.class::isInstance) )
+				.findFirst()
+				.ifPresent( type -> {
+					pushName( type.name() );
+					type.accept( this );
+					popName();
+				} );
 	}
 
 	@Override
 	public void visit(RequestResponseOperationDeclaration decl) {
-
+		Optional.of( decl.requestType() )
+				.filter( Predicate.not(TypeInlineDefinition.class::isInstance) )
+				.ifPresent( type -> {
+					pushName( type.name() );
+					type.accept( this );
+					popName();
+				} );
+		Optional.of( decl.responseType() )
+				.filter( Predicate.not(TypeInlineDefinition.class::isInstance) )
+				.ifPresent( type -> {
+					pushName( type.name() );
+					type.accept( this );
+					popName();
+				} );
 	}
 
 	@Override
@@ -740,7 +973,71 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit(ServiceNode n) {
+		List<InterfaceDefinition> interfaceDefinitions = n.program().children().stream()
+				.filter( InputPortInfo.class::isInstance )
+				.map( InputPortInfo.class::cast )
+				.findAny()
+				.map( InputPortInfo::getInterfaceList )
+				.orElse( Collections.emptyList() );
+		// Generate JavaServiceClass
+		CompilationUnit compilationUnit = new CompilationUnit();
+		compilationUnit.addImport( "jolie.runtime.JavaService" );
+		compilationUnit.addImport( "jolie.runtime.Value" );
+		compilationUnit.setPackageDeclaration( packageName );
+		ClassOrInterfaceDeclaration theClass = compilationUnit.addClass( n.name() + "Service" );
+		theClass.setModifier( Modifier.Keyword.PUBLIC, true );
+		theClass.addExtendedType( "JavaService" );
+		// Generate java methods corresponding to jolie interface operations
+		interfaceDefinitions.forEach( interfaceDefinition -> {
+			interfaceDefinition.operationsMap().forEach( ( name, operation ) -> {
+				MethodDeclaration methodDeclaration = theClass.addMethod( name );
+				// we do not set the type of the method, since, if it is not set, it defaults to void
+				methodDeclaration.setModifiers( Modifier.Keyword.PUBLIC );
+				methodDeclaration.addParameter( "Value", "value" );
+				BlockStmt methodBody = methodDeclaration.createBody();
+				TypeDefinition requestType = operation instanceof OneWayOperationDeclaration ?
+						( ( OneWayOperationDeclaration ) operation ).requestType()
+						: ( ( RequestResponseOperationDeclaration ) operation ).requestType();
+				addParseValueStatement( compilationUnit, methodBody, requestType );
+				if ( operation instanceof RequestResponseOperationDeclaration ) {
+					compilationUnit.addImport( "jolie.runtime.embedding.RequestResponse" );
+					methodDeclaration.addAnnotation( "RequestResponse" );
+					methodDeclaration.setType( "Value" );
+				}
+			} );
+		} );
+		compilationUnits.add( compilationUnit );
+		interfaceDefinitions.forEach( this::visit );
+	}
 
+	private static void addParseValueStatement( CompilationUnit compilationUnit, BlockStmt methodBody, TypeDefinition type ) {
+		Optional<JolieTypeJavaInfo> javaTypeInfo = Optional.of( type )
+				.filter( TypeInlineDefinition.class::isInstance )
+				.map( TypeInlineDefinition.class::cast )
+				.map( TypeInlineDefinition::basicType )
+				.map( BasicTypeDefinition::nativeType )
+				.map( JSDTVisitorUtils::getJavaInfo );
+		final StringJoiner assignment = new StringJoiner( " " );
+		if( javaTypeInfo.isEmpty() ) { // User defined type
+			String typeName = normalizeName( type.name() );
+			String variableName = type.name();
+			assignment.add( typeName )
+					.add( variableName )
+					.add( "=" )
+					.add( typeName + ".parse( value );" );
+			methodBody.addStatement( assignment.toString() );
+		} else if( javaTypeInfo.get().methodGetValue.isPresent() ) { // Jolie type distinct from void, any, undefined
+			final String javaType = javaTypeInfo.get().javaType;
+			if ( "ByteArray".equals( javaType ) ) {
+				compilationUnit.addImport( "jolie.runtime.ByteArray" );
+			}
+			final String methodGetValue = javaTypeInfo.get().methodGetValue.get();
+			assignment.add( javaType )
+					.add( methodGetValue )
+					.add( "=" )
+					.add( "value." +  methodGetValue + "();");
+			methodBody.addStatement( assignment.toString() );
+		}
 	}
 
 	@Override

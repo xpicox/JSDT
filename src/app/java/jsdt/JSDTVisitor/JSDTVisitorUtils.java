@@ -29,6 +29,39 @@ import java.util.*;
 
 class JSDTVisitorUtils {
 
+	static class JolieTypeJavaInfo {
+		final String javaType;
+		final Optional<String> methodIsValue;
+		final Optional<String> methodGetValue;
+		JolieTypeJavaInfo(String javaType, String methodIsValue, String methodGetValue) {
+			this.javaType = javaType;
+			this.methodIsValue = Optional.ofNullable(methodIsValue);
+			this.methodGetValue = Optional.ofNullable(methodGetValue);
+		}
+	}
+
+	static JolieTypeJavaInfo getJavaInfo( NativeType basicTypeName ) {
+		switch ( basicTypeName ) {
+			case VOID:
+				return new JolieTypeJavaInfo("Void", null, null );
+			case BOOL:
+				return new JolieTypeJavaInfo("Boolean", "isBool", "boolValue" );
+			case INT:
+				return new JolieTypeJavaInfo( "Integer", "isInt", "intValue" );
+			case LONG:
+				return new JolieTypeJavaInfo( "Long", "isLong", "longValue" );
+			case STRING:
+				return new JolieTypeJavaInfo( "String", "isString", "stringValue" );
+			case DOUBLE:
+				return new JolieTypeJavaInfo( "Double", "isDouble", "doubleValue" );
+			case RAW:
+				return new JolieTypeJavaInfo( "ByteArray", "isByteArray", "byteArrayValue" );
+			default: // "any" or "undefined"
+				return new JolieTypeJavaInfo( "Value", null, null);
+		}
+	}
+
+
 	static String jolieToJavaType( NativeType ctx ) {
 		switch ( ctx ) {
 			case VOID:
