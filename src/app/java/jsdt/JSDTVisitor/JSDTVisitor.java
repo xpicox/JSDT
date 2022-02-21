@@ -24,13 +24,9 @@ package jsdt.JSDTVisitor;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
-import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
-import com.github.javaparser.ast.type.Type;
-import com.github.javaparser.ast.visitor.GenericVisitor;
-import com.github.javaparser.ast.visitor.VoidVisitor;
 import jolie.lang.NativeType;
 import jolie.lang.parse.UnitOLVisitor;
 import jolie.lang.parse.ast.*;
@@ -46,16 +42,18 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import static jsdt.JSDTVisitor.JSDTVisitorUtils.*;
 
 public class JSDTVisitor implements UnitOLVisitor {
 
+	public static final String INTERFACE_SWITCH_METHOD_NAME = "when";
+	public static final String INTERFACE_MAP_METHOD_NAME = "map";
+	public static final String VISITOR_INTERFACE_NAME = "Is";
 	private final List< CompilationUnit > compilationUnits = new LinkedList<>();;
 	private final String packageName;
 	private Stack< String > lineage = new Stack<>();
-	private Stack< Optional< String > > enclosingUnionName = new Stack<>();
+	private Stack<Optional<ClassOrInterfaceDeclaration>> enclosingUnionInterface = new Stack<>();
 	private final Set< TypeDefinition > collectedInterfaceTypes = new HashSet<>();
 	private final Map< String, ServiceNode > serviceDeclarations = new HashMap<>();
 	private final Map< String, InterfaceDefinition > interfaceDeclarations = new HashMap<>();
@@ -160,17 +158,17 @@ public class JSDTVisitor implements UnitOLVisitor {
 		pushName( typeOrLabel, Optional.empty() );
 	}
 
-	private void pushName( String typeOrLabel, String unionName ) {
-		 pushName( typeOrLabel, Optional.ofNullable( unionName ) );
+	private void pushName( String typeOrLabel, ClassOrInterfaceDeclaration compilationUnit ) {
+		pushName( typeOrLabel, Optional.of( compilationUnit ) );
 	}
 
-	private void pushName( String typeOrLabel, Optional<String> unionName ){
+	private void pushName(String typeOrLabel, Optional<ClassOrInterfaceDeclaration> compilationUnit ){
 		lineage.push( normalizeName(typeOrLabel) );
-		this.enclosingUnionName.push( unionName );
+		enclosingUnionInterface.push( compilationUnit );
 	}
 
 	private String popName() {
-		enclosingUnionName.pop();
+		enclosingUnionInterface.pop();
 		return lineage.pop();
 	}
 
@@ -186,8 +184,8 @@ public class JSDTVisitor implements UnitOLVisitor {
 		return getPeekUnionName().isPresent();
 	}
 
-	private Optional< String > getPeekUnionName() {
-		return enclosingUnionName.isEmpty() ? Optional.empty() : enclosingUnionName.peek();
+	private Optional<ClassOrInterfaceDeclaration> getPeekUnionName() {
+		return enclosingUnionInterface.isEmpty() ? Optional.empty() : enclosingUnionInterface.peek();
 	}
 
 	private boolean isTopLevelTypeDeclaration() {
@@ -196,12 +194,12 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	private void runInNewLineageContext( Runnable runnable ){
 		final Stack< String > lineage = this.lineage;
-		final Stack< Optional< String > > enclosingUnionName = this.enclosingUnionName;
+		final Stack<Optional<ClassOrInterfaceDeclaration>> enclosingUnionName = this.enclosingUnionInterface;
 		this.lineage = new Stack<>();
-		this.enclosingUnionName = new Stack<>();
+		this.enclosingUnionInterface = new Stack<Optional<ClassOrInterfaceDeclaration>>();
 		runnable.run();
 		this.lineage = lineage;
-		this.enclosingUnionName = enclosingUnionName;
+		this.enclosingUnionInterface = enclosingUnionName;
 	}
 
 
@@ -219,6 +217,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 	@Override
 	public void visit( TypeInlineDefinition typeInlineDefinition ) {
+		// TODO: implement union interfaces
 		// TODO: make constructor private
 		// TODO: make deafault contructor public
 		// TODO: put fields at top of class definition, maybe sort the body of the class
@@ -489,7 +488,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 			}
 		}
 
-		final Optional<String> unionName = getPeekUnionName();
+		final Optional<ClassOrInterfaceDeclaration> unionName = getPeekUnionName();
 		runInNewLineageContext( () -> {
 			pushName( typeDefinitionLink.linkedTypeName(), unionName );
 			typeDefinitionLink.linkedType().accept( this );
@@ -580,21 +579,19 @@ public class JSDTVisitor implements UnitOLVisitor {
 		final String interfaceName = getLineage();
 		final ClassOrInterfaceDeclaration unionInterface = compilationUnit.addInterface( interfaceName )
 				.setModifier( Modifier.Keyword.PUBLIC, true );
-		final String visitorInterfaceName = "Is";
 		// Declare visitor interface
 		ClassOrInterfaceDeclaration visitorInterface =
 				new ClassOrInterfaceDeclaration()
 						.setInterface( true )
-						.setName( visitorInterfaceName )
+						.setName( VISITOR_INTERFACE_NAME )
 						.addTypeParameter( "R" );
 		unionInterface.addMember( visitorInterface );
 		// Declare switch-like method
-		final String switchMethodName = "when";
 		MethodDeclaration switchMethod = unionInterface
-				.addMethod( switchMethodName )
+				.addMethod( INTERFACE_SWITCH_METHOD_NAME )
 				.addTypeParameter( "R" )
 				.setType( "R" )
-				.addParameter( interfaceName + "." + visitorInterfaceName + "<? extends R>", "cases" )
+				.addParameter( interfaceName + "." + VISITOR_INTERFACE_NAME + "<? extends R>", "cases" )
 				.removeBody();
 		// Declare toValue method
 		MethodDeclaration toValueMethod = unionInterface
@@ -614,12 +611,11 @@ public class JSDTVisitor implements UnitOLVisitor {
 		// Setup Optional-like interface
 
 		// map method
-		final String mapMethodName = "map";
 		MethodDeclaration mapMethod = unionInterface
-				.addMethod( mapMethodName )
+				.addMethod( INTERFACE_MAP_METHOD_NAME )
 				.addTypeParameter( "R" )
 				.setType( "Optional<? extends R>" )
-				.addParameter( interfaceName + "." + visitorInterfaceName + "<? extends R>", "cases" )
+				.addParameter( interfaceName + "." + VISITOR_INTERFACE_NAME + "<? extends R>", "cases" )
 				.removeBody();
 		// empty method
 		final String emptyFieldName = "EMPTY_" + interfaceName.toUpperCase();
@@ -627,40 +623,33 @@ public class JSDTVisitor implements UnitOLVisitor {
 				.addMethod( "empty", Modifier.Keyword.STATIC )
 				.setType( interfaceName )
 				.setBody( new BlockStmt().addStatement( new ReturnStmt( emptyFieldName ) ) );
-		// EMPTY field declaration and initialization
-		final ObjectCreationExpr anonymousClassCreation = new ObjectCreationExpr()
-				.setType( interfaceName );
-		unionInterface.addField( interfaceName, emptyFieldName )
-				.getVariable( 0 )
-				.setInitializer( anonymousClassCreation );
+		// EMPTY field - start
+		// AnonymousClass - implementation
 		final ClassOrInterfaceDeclaration anonymousClassBody = new ClassOrInterfaceDeclaration();
-		final ThrowStmt throwNoSuchElement = new ThrowStmt( new ObjectCreationExpr()
+		final BlockStmt throwNoSuchElement = new BlockStmt().addStatement( new ThrowStmt( new ObjectCreationExpr()
 				.setType( "NoSuchElementException" )
-				.addArgument( "\"No value present\"" ) );
-		// AnonymousClass - switch method implementation
-		anonymousClassBody
-				.addMethod( switchMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
-				.addAnnotation( "Override" )
-				.addTypeParameter( switchMethod.getTypeParameter( 0 ) )
-				.setType( switchMethod.getType() )
-				.addParameter( switchMethod.getParameter( 0 ) )
-				.setBody( new BlockStmt().addStatement( throwNoSuchElement ) );
+				.addArgument( "\"No value present\"" ) ) );
+		// AnonymousClass - switch and map method implementation
+		addUnionTypeInterfaceImplementation( anonymousClassBody, unionInterface );
+		anonymousClassBody.getMethodsByName( INTERFACE_SWITCH_METHOD_NAME ).get( 0 )
+				.setBody( throwNoSuchElement );
+		anonymousClassBody.getMethodsByName( INTERFACE_MAP_METHOD_NAME ).get( 0 )
+				.setBody( throwNoSuchElement );
 		// AnonymousClass - toValue method implementation
 		anonymousClassBody
 				.addMethod( toValueMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
 				.addAnnotation( "Override" )
 				.setType( toValueMethod.getType() )
 				.setBody( new BlockStmt().addStatement( throwNoSuchElement ) );
-		// AnonymousClass - map method implementation
-		anonymousClassBody
-				.addMethod( mapMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
-				.addAnnotation( "Override" )
-				.addTypeParameter( mapMethod.getTypeParameter( 0 ) )
-				.setType( mapMethod.getType() )
-				.addParameter( mapMethod.getParameter( 0 ) )
-				.setBody( new BlockStmt().addStatement( new ReturnStmt( "Optional.empty()" ) ) );
-		anonymousClassCreation.setAnonymousClassBody( anonymousClassBody.getMembers() );
-		// AnonymousClass - End of EMPTY field initialization
+		// AnonymousClass - end implementation
+		final ObjectCreationExpr anonymousClassCreation = new ObjectCreationExpr()
+				.setType( interfaceName )
+				.setAnonymousClassBody( anonymousClassBody.getMembers() );
+		// EMPTY field - declaration and initialization
+		unionInterface.addField( interfaceName, emptyFieldName )
+				.getVariable( 0 )
+				.setInitializer( anonymousClassCreation );
+		// EMPTY field - End
 
 
 		// used in parseBody
@@ -715,7 +704,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 				parseBody.addStatement( "return " + parseCall );
 			}
 
-			pushName( simpleCaseName, interfaceName );
+			pushName( simpleCaseName, unionInterface );
 			t.accept( this );
 			popName();
 		}
@@ -765,21 +754,30 @@ public class JSDTVisitor implements UnitOLVisitor {
 		return unionCases;
 	}
 
-
-	private void addUnionTypeInterfaceImplementation( ClassOrInterfaceDeclaration theClass, String interfaceName ) {
-		/* Add visitor method:
-			@Override
-			public <R> R when(UnionType.Cases<R> cases) {
-				return cases.is(this);
-			}
-		 */
+	/* Add visitor method:
+        @Override
+      	public <R> R when(UnionType.Cases<R> cases) {
+      		return cases.is(this);
+      	}
+      */
+	private void addUnionTypeInterfaceImplementation( ClassOrInterfaceDeclaration theClass,
+													  ClassOrInterfaceDeclaration theInterface ) {
+		final String interfaceName = theInterface.getNameAsString();
 		theClass.addImplementedType( interfaceName );
-		theClass.addMethod( "when", Modifier.Keyword.PUBLIC )
+		// switch method implementation
+		theClass.addMethod( INTERFACE_SWITCH_METHOD_NAME, Modifier.Keyword.PUBLIC )
 				.addAnnotation( "Override" )
 				.addTypeParameter( "R" )
 				.setType( "R" )
-				.addParameter( interfaceName + ".Cases<R>", "cases" )
-				.setBody( new BlockStmt().addStatement( "return cases.is( this );" ) );
+				.addParameter( interfaceName + "." + VISITOR_INTERFACE_NAME + "<? extends R>", "cases" )
+				.setBody( new BlockStmt().addStatement( new ReturnStmt( "cases.is( this )" ) ) );
+		// map method implementation
+		theClass.addMethod( INTERFACE_MAP_METHOD_NAME, Modifier.Keyword.PUBLIC )
+				.addAnnotation( "Override" )
+				.addTypeParameter( "R" )
+				.setType( "R" )
+				.addParameter( interfaceName + "." + VISITOR_INTERFACE_NAME + "<? extends R>", "cases" )
+				.setBody( new BlockStmt().addStatement( new ReturnStmt( "cases.is( this )" ) ) );
 	}
 
 
