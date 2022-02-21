@@ -24,11 +24,13 @@ package jsdt.JSDTVisitor;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Modifier;
 import com.github.javaparser.ast.body.*;
-import com.github.javaparser.ast.stmt.BlockStmt;
-import com.github.javaparser.ast.stmt.ExpressionStmt;
-import com.github.javaparser.ast.stmt.IfStmt;
-import com.github.javaparser.ast.stmt.ReturnStmt;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.stmt.*;
 import com.github.javaparser.ast.type.ClassOrInterfaceType;
+import com.github.javaparser.ast.type.Type;
+import com.github.javaparser.ast.visitor.GenericVisitor;
+import com.github.javaparser.ast.visitor.VoidVisitor;
 import jolie.lang.NativeType;
 import jolie.lang.parse.UnitOLVisitor;
 import jolie.lang.parse.ast.*;
@@ -44,6 +46,7 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static jsdt.JSDTVisitor.JSDTVisitorUtils.*;
 
@@ -259,6 +262,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 
 		}
 
+
 		// toValue
 		MethodDeclaration toValueMethod = theClass.addMethod( "toValue", Modifier.Keyword.PUBLIC );
 		BlockStmt toValueMethodBody = toValueMethod.createBody();
@@ -322,6 +326,7 @@ public class JSDTVisitor implements UnitOLVisitor {
 					compilationUnit.addImport( "java.util.Optional" );
 				}
 
+				// TODO: Follow links
 				String fieldTypeName = node instanceof TypeDefinitionLink ? ( ( TypeDefinitionLink ) node ).linkedTypeName() : getLineage();
 				switch ( fieldTypeName ) {
 					case "undefined":
@@ -413,6 +418,32 @@ public class JSDTVisitor implements UnitOLVisitor {
 		}
 	}
 
+	/* We are going to implement idea 1.
+	   Example and rationale behind top level type definiontion links.
+
+	   Problem 1:
+	   Jolie: type A : B
+       Conflicting requirements if translated to Java because we don't have newtypes or type synonyms:
+       1. Wherever I expect an A, I have to provide a B: A is a superclass of B. Or I must be able to convert B to A.
+       2. A must have same fields and methods of B: A should be a subclass of B? No code duplication if A extends B.
+          Also B does not need to know about A. Undesired effect: I can use A to initialize B, but it's still sound.
+	   Some Solutions:
+       To mitigate point 1: Allocation happens only though default constructor.
+       To mitigate point 2: Fields can be set to private.
+       Problem with mitigation 1: how to default initialize a field which corresponds to an interface?
+       If B gets translated to an interface, we have only case 1, i.e., we want to be able to initialize A
+       with subtypes of the interface B. So A must implement the empty interface B.
+
+       Problem 2:
+       type A : B
+       type C : B
+       No multiple inheritance in java, so A and C can not be classes if considering some subtyping solution.
+
+	   More robust ideas:
+       1. Follow typelinks to ignore them completely. We are going through this idea for the time being.
+       2. Generate class A, generate class B, generate cast methods between the two independent classes.
+       3. Generate two types from a Jolie type: a parsing type and a serializing type with different hierarchies.
+    */
 	@Override
 	public void
 	visit( TypeDefinitionLink typeDefinitionLink ) {
@@ -466,124 +497,171 @@ public class JSDTVisitor implements UnitOLVisitor {
 		} );
 	}
 
+	private static TypeDefinition followTypeDefinitionLinks( TypeDefinitionLink typeDefinitionLink ) {
+		while ( typeDefinitionLink.linkedType() instanceof TypeDefinitionLink ) {
+			typeDefinitionLink = (TypeDefinitionLink) typeDefinitionLink.linkedType();
+		}
+		return typeDefinitionLink.linkedType();
+	}
 
+	private static TypeDefinition followTypeDefinitionLinks( TypeDefinition t ) {
+		return t instanceof TypeDefinitionLink ? followTypeDefinitionLinks( (TypeDefinitionLink) t ) : t;
+	}
+
+	/*
+	- Union types should not be classes because there is no multiple inheritance in java
+    - We want a way to default initialize UnionTypes!
+    - And then to change easily the field type if we want to change the default value
+    How union types get translated:
+    Jolie code
+	type U : A | B | C
+	becomes:
+    public interface U {
+        // Pattern matching with a visitor
+        <R> R when(Is<? extends R> c); // Switch
+       	interface Is<R> {              // Cases
+        	R is(A v);
+        	R is(B v);
+        	R is(C v);
+    	}
+
+    	// Jolie Value interface
+    	Value toValue();
+    	static U parse( Value v ) { ... }
+
+    	// Optional-like interface
+    	<R> Optional<? extends R> map(As<? extends R> cases);
+    	interface As<R> {
+     		R as(A v);
+        	R as(B v);
+        	R as(C v);
+    	}
+    	default U empty() {
+        	return EMPTY;
+    	}
+
+    	U EMPTY = new U() { // Optional Empty
+        	@Override
+        	public <R> R when(Is<? extends R> c) {
+            	throw new NoSuchElementException( "No value present" );
+        	}
+
+        	@Override
+        	public <R> Optional<? extends R> ifPresent(As<? extends R> cases) {
+            	return Optional.empty();
+        	}
+
+        	@Override
+        	public Value toValue() {
+            	return new NoSuchElementException( "No value present" );
+        	}
+    	};
+    }
+    class A implements U { ... }
+    class B implements U { ... }
+    class C implements U { ... }
+     */
 	@Override
 	public void visit( TypeChoiceDefinition typeChoiceDefinition ) {
 		System.out.println( "Type Choice Definition: " + typeChoiceDefinition.name() );
-		/* TODO: https://stackoverflow.com/a/51092768
-		UnionType unionType = new TypeA();
-
-		Integer count = unionType.when(new UnionType.Cases<Integer>() {
-    	@Override
-    	public Integer is(TypeA typeA) {
-        // TypeA-specific handling code
-    	}
-
-    	@Override
-    	public Integer is(TypeB typeB) {
-        	// TypeB-specific handling code
-    	}
-		});
-
-		boilerplate code:
-
-		interface UnionType {
-			<R> R when(Cases<R> c);
-
-			interface Cases<R> {
-				R is(TypeA typeA);
-				R is(TypeB typeB);
-			}
-		}
-
-		class TypeA implements UnionType {
-
-			// ... TypeA-specific code ...
-
-			@Override
-			public <R> R when(Cases<R> cases) {
-				return cases.is(this);
-			}
-		}
-
-		class TypeB implements UnionType {
-
-			// ... TypeB-specific code ...
-
-			@Override
-			public <R> R when(Cases<R> cases) {
-				return cases.is(this);
-			}
-		}
-		*/
-
-		/*
-		Collect all alternatives of a TypeChoice.
-		This code relies on the current encoding of TypeChoices in the Jolie AST, i.e.,
-		TypeChoiceDefinitions (TDC) are like cons cells of lisp, and an AST for the type
-		A | B | C will have the following shape:
-		       TDC                     TDC
-		┌───────┬───────┐       ┌───────┬───────┐
-		│   A   │   ◯───┼──────►│   B   │   C   │
-		└───────┴───────┘       └───────┴───────┘
-		*/
+		// TODO: Handle this type-choice being an alternative of an outer one
 		if ( isTopLevelTypeDeclaration() && visitedTypes.containsKey( typeChoiceDefinition. name() ) ) {
 			return;
 		}
-		TypeChoiceDefinition tdl = typeChoiceDefinition;
-		List<TypeDefinition> unionCases = new ArrayList<>(List.of(tdl.left()));
-		while ( tdl.right() instanceof TypeChoiceDefinition ) {
-			tdl = (TypeChoiceDefinition) tdl.right();
-			unionCases.add( tdl.left() );
-		}
-		unionCases.add( tdl.right() );
-		// visitedTypes.add( typeChoiceDefinition.name() );
-		// Create UnionType interface
+		List<TypeDefinition> unionCases = collectTypeChoiceCases( typeChoiceDefinition );
+
 		CompilationUnit compilationUnit = new CompilationUnit();
 		compilationUnit.setPackageDeclaration( packageName );
-
-		/* old: */
 		compilationUnit.addImport( "jolie.runtime.Value" );
+		compilationUnit.addImport( "java.util.NoSuchElementException" );
+		compilationUnit.addImport( "java.util.Optional" );
 
-		/*
-		interface UnionType {
-			<R> R when(Cases<R> c);
-
-			interface Cases<R> {
-				R is(TypeA typeA);
-				R is(TypeB typeB);
-			}
-		}
-		 */
-		String interfaceName = getLineage();
-		ClassOrInterfaceDeclaration unionInterface = compilationUnit.addInterface( interfaceName )
+		// Declare interface U
+		final String interfaceName = getLineage();
+		final ClassOrInterfaceDeclaration unionInterface = compilationUnit.addInterface( interfaceName )
 				.setModifier( Modifier.Keyword.PUBLIC, true );
-		unionInterface
-				.addMethod("when" )
+		final String visitorInterfaceName = "Is";
+		// Declare visitor interface
+		ClassOrInterfaceDeclaration visitorInterface =
+				new ClassOrInterfaceDeclaration()
+						.setInterface( true )
+						.setName( visitorInterfaceName )
+						.addTypeParameter( "R" );
+		unionInterface.addMember( visitorInterface );
+		// Declare switch-like method
+		final String switchMethodName = "when";
+		MethodDeclaration switchMethod = unionInterface
+				.addMethod( switchMethodName )
 				.addTypeParameter( "R" )
 				.setType( "R" )
-				.addParameter( "Cases<R>", "c")
+				.addParameter( interfaceName + "." + visitorInterfaceName + "<? extends R>", "cases" )
 				.removeBody();
-		unionInterface
+		// Declare toValue method
+		MethodDeclaration toValueMethod = unionInterface
 				.addMethod( "toValue" )
 				.setType( "Value" )
 				.removeBody();
+		// Declare parse method
 		BlockStmt parseBody = unionInterface
 				.addMethod( "parse", Modifier.Keyword.STATIC )
 				.setType( interfaceName )
 				.addParameter( "Value", "value")
 				.createBody();
 		parseBody.addStatement( new StringJoiner( " ")
-				.add(interfaceName)
+				.add( interfaceName )
 				.add( "result = null;")
-				.toString());
+				.toString() );
+		// Setup Optional-like interface
 
-		ClassOrInterfaceDeclaration casesInterface =
-				new ClassOrInterfaceDeclaration()
-						.setInterface( true )
-						.setName( "Cases" )//  , true,"Cases")
-						.addTypeParameter("R");
-		unionInterface.addMember( casesInterface );
+		// map method
+		final String mapMethodName = "map";
+		MethodDeclaration mapMethod = unionInterface
+				.addMethod( mapMethodName )
+				.addTypeParameter( "R" )
+				.setType( "Optional<? extends R>" )
+				.addParameter( interfaceName + "." + visitorInterfaceName + "<? extends R>", "cases" )
+				.removeBody();
+		// empty method
+		final String emptyFieldName = "EMPTY_" + interfaceName.toUpperCase();
+		unionInterface
+				.addMethod( "empty", Modifier.Keyword.STATIC )
+				.setType( interfaceName )
+				.setBody( new BlockStmt().addStatement( new ReturnStmt( emptyFieldName ) ) );
+		// EMPTY field declaration and initialization
+		final ObjectCreationExpr anonymousClassCreation = new ObjectCreationExpr()
+				.setType( interfaceName );
+		unionInterface.addField( interfaceName, emptyFieldName )
+				.getVariable( 0 )
+				.setInitializer( anonymousClassCreation );
+		final ClassOrInterfaceDeclaration anonymousClassBody = new ClassOrInterfaceDeclaration();
+		final ThrowStmt throwNoSuchElement = new ThrowStmt( new ObjectCreationExpr()
+				.setType( "NoSuchElementException" )
+				.addArgument( "\"No value present\"" ) );
+		// AnonymousClass - switch method implementation
+		anonymousClassBody
+				.addMethod( switchMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
+				.addAnnotation( "Override" )
+				.addTypeParameter( switchMethod.getTypeParameter( 0 ) )
+				.setType( switchMethod.getType() )
+				.addParameter( switchMethod.getParameter( 0 ) )
+				.setBody( new BlockStmt().addStatement( throwNoSuchElement ) );
+		// AnonymousClass - toValue method implementation
+		anonymousClassBody
+				.addMethod( toValueMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
+				.addAnnotation( "Override" )
+				.setType( toValueMethod.getType() )
+				.setBody( new BlockStmt().addStatement( throwNoSuchElement ) );
+		// AnonymousClass - map method implementation
+		anonymousClassBody
+				.addMethod( mapMethod.getNameAsString(), Modifier.Keyword.PUBLIC )
+				.addAnnotation( "Override" )
+				.addTypeParameter( mapMethod.getTypeParameter( 0 ) )
+				.setType( mapMethod.getType() )
+				.addParameter( mapMethod.getParameter( 0 ) )
+				.setBody( new BlockStmt().addStatement( new ReturnStmt( "Optional.empty()" ) ) );
+		anonymousClassCreation.setAnonymousClassBody( anonymousClassBody.getMembers() );
+		// AnonymousClass - End of EMPTY field initialization
+
 
 		// used in parseBody
 		IfStmt returnResultIfNotNull = new IfStmt()
@@ -591,18 +669,30 @@ public class JSDTVisitor implements UnitOLVisitor {
 				.setThenStmt( new ReturnStmt("result") );
 
 		int unionCaseNumber = 0;
+		Set<String> caseTypeNamesAlreadyPresent = new HashSet<>();
 		for ( TypeDefinition t : unionCases ) {
 			unionCaseNumber += 1;
-			final String unionCaseName;
-			if( t instanceof TypeDefinitionLink ) {
-				unionCaseName = normalizeName( ( ( TypeDefinitionLink)t ).linkedTypeName() );
+			final String resolvedCaseTypeName = followTypeDefinitionLinks(t).name();
+			final String fullyQualifiedCaseTypeName;
+			final String simpleCaseName;
+			// Generate compilation units for this case
+			if ( resolvedCaseTypeName.equals( typeChoiceDefinition.name() ) ) {
+				// t is an inline definition of this union
+				simpleCaseName = "Case" + unionCaseNumber;
+				fullyQualifiedCaseTypeName = interfaceName + simpleCaseName;
+			} else if ( !caseTypeNamesAlreadyPresent.contains( resolvedCaseTypeName ) ){
+				// TODO: What if t was a link to another union
+				// t is a TypeDefinitionLink and we never encountered the linked typename yet in this union type
+				fullyQualifiedCaseTypeName = simpleCaseName = normalizeName( resolvedCaseTypeName );
+				caseTypeNamesAlreadyPresent.add( resolvedCaseTypeName );
 			} else {
-				unionCaseName = interfaceName + "Case" + unionCaseNumber;
+				// t is a TypeDefinitionLink and we already encountered the linked typename in this union type
+				continue;
 			}
-			casesInterface
+			visitorInterface
 					.addMethod( "is" )
 					.setType( "R" )
-					.addParameter( unionCaseName, "v" )
+					.addParameter( fullyQualifiedCaseTypeName, "v" )
 					.removeBody();
 			/*
 			parseBody.addStatement( new AssignExpr()
@@ -617,15 +707,15 @@ public class JSDTVisitor implements UnitOLVisitor {
 			Generation of parse body which does not handle overlapping unions,
 			since it returns the first successful parse.
 			 */
-			String parseCall = unionCaseName + ".parse( value );";
+			String parseCall = fullyQualifiedCaseTypeName + ".parse( value );";
 			if ( unionCaseNumber < unionCases.size() ) {
 				parseBody.addStatement( "result = " + parseCall );
 				parseBody.addStatement( returnResultIfNotNull );
 			} else {
 				parseBody.addStatement( "return " + parseCall );
 			}
-			// Generate compilation units for this case
-			pushName( t instanceof TypeInlineDefinition ? "Case" + unionCaseNumber : unionCaseName, interfaceName );
+
+			pushName( simpleCaseName, interfaceName );
 			t.accept( this );
 			popName();
 		}
@@ -634,6 +724,47 @@ public class JSDTVisitor implements UnitOLVisitor {
 			visitedTypes.put( typeChoiceDefinition.name(), compilationUnit );
 		}
 	}
+	/*
+	Collect all alternatives of a TypeChoice, resolving type links while traversing the ast.
+	 */
+	private List<TypeInlineDefinition> collectResolvedTypeChoiceCases( TypeChoiceDefinition typeChoiceDefinition ) {
+		List<TypeInlineDefinition> unionCases = new ArrayList<>();
+		TypeChoiceDefinition tdl = typeChoiceDefinition;
+		TypeDefinition left = followTypeDefinitionLinks( tdl.left() );
+		TypeDefinition right = followTypeDefinitionLinks( tdl.right() );
+		if( left instanceof TypeChoiceDefinition ) {
+			unionCases.addAll( collectResolvedTypeChoiceCases( (TypeChoiceDefinition) left) );
+		} else {
+			unionCases.add( (TypeInlineDefinition) left );
+		}
+		if( right instanceof TypeChoiceDefinition ) {
+			unionCases.addAll( collectResolvedTypeChoiceCases( (TypeChoiceDefinition) right) );
+		} else {
+			unionCases.add( (TypeInlineDefinition) right );
+		}
+		return unionCases;
+	}
+
+	/*
+	Collect all alternatives of a TypeChoice.
+	This code relies on the current encoding of TypeChoices in the Jolie AST, i.e.,
+	TypeChoiceDefinitions (TDC) are like cons cells of lisp, and an AST for the type
+	A | B | C will have the following shape:
+		       TDC                     TDC
+		┌───────┬───────┐       ┌───────┬───────┐
+		│   A   │   ◯───┼──────►│   B   │   C   │
+		└───────┴───────┘       └───────┴───────┘
+	 */
+	private List<TypeDefinition> collectTypeChoiceCases( TypeChoiceDefinition tcd ) {
+		List<TypeDefinition> unionCases = new ArrayList<>( List.of( tcd.left() ) );
+		while ( tcd.right() instanceof TypeChoiceDefinition ) {
+			tcd = (TypeChoiceDefinition) tcd.right();
+			unionCases.add( tcd.left() );
+		}
+		unionCases.add( tcd.right() );
+		return unionCases;
+	}
+
 
 	private void addUnionTypeInterfaceImplementation( ClassOrInterfaceDeclaration theClass, String interfaceName ) {
 		/* Add visitor method:
