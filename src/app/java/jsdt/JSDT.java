@@ -21,6 +21,13 @@
 
 package jsdt;
 
+import com.github.javaparser.printer.DefaultPrettyPrinter;
+import com.github.javaparser.printer.DefaultPrettyPrinterVisitor;
+import com.github.javaparser.printer.Printer;
+import com.github.javaparser.printer.configuration.ConfigurationOption;
+import com.github.javaparser.printer.configuration.DefaultConfigurationOption;
+import com.github.javaparser.printer.configuration.DefaultPrinterConfiguration;
+import com.github.javaparser.printer.configuration.PrinterConfiguration;
 import jolie.Interpreter;
 import jolie.cli.CommandLineException;
 import jolie.cli.CommandLineParser;
@@ -52,29 +59,33 @@ import java.util.stream.Collectors;
 
 
 @CommandLine.Command(
-				name = "jsdt",
-				mixinStandardHelpOptions = true,
-				versionProvider = JSDT.VersionProvider.class,
-				description = { "JavaService Development Tool" }
+	name = "jsdt",
+	mixinStandardHelpOptions = true,
+	versionProvider = JSDT.VersionProvider.class,
+	description = { "JavaService Development Tool" }
 )
-public class JSDT implements Callable< Integer > {
+public class JSDT implements Callable<Integer> {
 
-	@CommandLine.Parameters(index = "0", description = "The .ol file containing the type(s) and/or interface(s) to compile.")
+	@CommandLine.Parameters( index = "0", description = "The .ol file containing the type(s) and/or interface(s) to compile." )
 	private File file;
 
-	@CommandLine.Parameters(index = "1", description = "The name of the symbol source target of the compilation. By default it is an interface.")
+	@CommandLine.Parameters( index = "1", description = "The name of the symbol source target of the compilation. By default it is an interface." )
 	private String symbolName;
 
-	@CommandLine.Option(names = { "--type" }, description = "Indicates that the target symbol is a type, instead of an interface.")
+	@CommandLine.Option( names = {
+		"--type" }, description = "Indicates that the target symbol is a type, instead of an interface." )
 	private boolean targetIsType;
 
-	@CommandLine.Option(names = { "--compileTypes" }, description = "Compile also the types used by the target interface.")
+	@CommandLine.Option( names = {
+		"--compileTypes" }, description = "Compile also the types used by the target interface." )
 	private boolean compileTypes;
 
-	@CommandLine.Option(names = { "--package" }, description = "The name of the package of the generated Java classes.")
+	@CommandLine.Option( names = {
+		"--package" }, description = "The name of the package of the generated Java classes." )
 	private String packageName;
 
-	@CommandLine.Option(names = { "--dstDir" }, description = "The path of the destination directory of the generated Java classes.")
+	@CommandLine.Option( names = {
+		"--dstDir" }, description = "The path of the destination directory of the generated Java classes." )
 	private String dstDir = ".";
 
 	public static void main( String[] args ) {
@@ -92,33 +103,33 @@ public class JSDT implements Callable< Integer > {
 		try {
 			String[] arguments = { file.toPath().toString() };
 			Interpreter.Configuration interpreterConfiguration =
-							new CommandLineParser( arguments, JSDT.class.getClassLoader() ).getInterpreterConfiguration();
+				new CommandLineParser( arguments, JSDT.class.getClassLoader() ).getInterpreterConfiguration();
 			SemanticVerifier.Configuration configuration =
-							new SemanticVerifier.Configuration( interpreterConfiguration.executionTarget() );
+				new SemanticVerifier.Configuration( interpreterConfiguration.executionTarget() );
 			configuration.setCheckForMain( false );
 			final InputStream sourceIs;
 			sourceIs = interpreterConfiguration.inputStream();
 			Program program = ParsingUtils.parseProgram(
-							sourceIs,
-							interpreterConfiguration.programFilepath().toURI(),
-							interpreterConfiguration.charset(),
-							new String[ 0 ], // includesPath
-							new String[ 0 ], // packagePath
-							interpreterConfiguration.jolieClassLoader(),
-							interpreterConfiguration.constants(),
-							configuration,
-							true );
+				sourceIs,
+				interpreterConfiguration.programFilepath().toURI(),
+				interpreterConfiguration.charset(),
+				new String[ 0 ], // includesPath
+				new String[ 0 ], // packagePath
+				interpreterConfiguration.jolieClassLoader(),
+				interpreterConfiguration.constants(),
+				configuration,
+				true );
 
-			packageName = ( packageName == null ) ? symbolName : packageName + "." + symbolName;
-			final List< CompilationUnit > compilationUnits = new LinkedList<>();
-			if ( targetIsType ) {
-				if ( true )
+			packageName = (packageName == null) ? symbolName : packageName + "." + symbolName;
+			final List<CompilationUnit> compilationUnits = new LinkedList<>();
+			if( targetIsType ) {
+				if( true )
 					return 0;
 				program.children().stream()
-								.filter( c -> c instanceof TypeDefinition && ( ( TypeDefinition ) c ).name().equals( symbolName ) )
-								.findAny().ifPresent( node -> {
-					compilationUnits.addAll( JSDTVisitor.generateTypeClasses( ( TypeDefinition ) node, packageName ) );
-				} );
+					.filter( c -> c instanceof TypeDefinition && ((TypeDefinition) c).name().equals( symbolName ) )
+					.findAny().ifPresent( node -> {
+						compilationUnits.addAll( JSDTVisitor.generateTypeClasses( (TypeDefinition) node, packageName ) );
+					} );
 			} else {
 				compilationUnits.addAll( JSDTVisitor.generateJavaServiceInterface( program, symbolName, packageName ) );
 				/* program.children().stream()
@@ -131,29 +142,38 @@ public class JSDT implements Callable< Integer > {
 								}
 				);
 				 */
-				if ( compilationUnits.isEmpty() ) {
-					System.err.println( "No classes have been generated. Please, check the input file and the launch parameters." );
+				if( compilationUnits.isEmpty() ) {
+					System.err.println(
+						"No classes have been generated. Please, check the input file and the launch parameters." );
 				} else {
 					Path destinationPath = Path.of( dstDir )
-							.resolve( packageName.replaceAll("\\.", Matcher.quoteReplacement( File.separator ) ) );
+						.resolve( packageName.replaceAll( "\\.", Matcher.quoteReplacement( File.separator ) ) );
 					Files.createDirectories( destinationPath );
-					for ( CompilationUnit cu : compilationUnits ) {
-						if ( cu.getTypes().size() > 1 ) {
-							throw new RuntimeException( "There should be a 1:1 correspondence between compilationUnits and classes, found "
-											+ cu.getTypes().size() + ": "
-											+ cu.getTypes().stream().map( NodeWithSimpleName::getNameAsString ).collect( Collectors.joining( "," ) ) );
+					for( CompilationUnit cu : compilationUnits ) {
+						if( cu.getTypes().size() > 1 ) {
+							throw new RuntimeException(
+								"There should be a 1:1 correspondence between compilationUnits and classes, found "
+									+ cu.getTypes().size() + ": "
+									+ cu.getTypes().stream().map( NodeWithSimpleName::getNameAsString )
+									.collect( Collectors.joining( "," ) ) );
 						}
 						Path filePath = destinationPath.resolve( cu.getTypes().get( 0 ).getNameAsString() + ".java" );
-						if ( filePath.toFile().exists() ) {
+						if( filePath.toFile().exists() ) {
 							filePath.toFile().delete();
 						}
 						Files.createFile( filePath );
-						Files.writeString( filePath, cu.toString(), StandardOpenOption.WRITE );
+						PrinterConfiguration printerConfiguration = new DefaultPrinterConfiguration();
+						printerConfiguration.addOption(
+							new DefaultConfigurationOption(
+								DefaultPrinterConfiguration.ConfigOption.COLUMN_ALIGN_FIRST_METHOD_CHAIN, true ) );
+						Printer printer = new DefaultPrettyPrinter( printerConfiguration );
+
+						Files.writeString( filePath, printer.print( cu ), StandardOpenOption.WRITE );
 					}
 				}
 			}
 			return 0;
-		} catch ( ModuleException | CodeCheckingException | ParserException | IOException | CommandLineException e ) {
+		} catch( ModuleException | CodeCheckingException | ParserException | IOException | CommandLineException e ) {
 			e.printStackTrace();
 			return 1;
 		}
@@ -164,9 +184,10 @@ public class JSDT implements Callable< Integer > {
 		@Override
 		public String[] getVersion() throws Exception {
 			Properties properties = ProjectPropertiesLoader.loadPropertyFile( JSDT.class.getClassLoader() );
-			return new String[]{ "JSDT version " + properties.getProperty( "version" ) };
+			return new String[] { "JSDT version " + properties.getProperty( "version" ) };
 		}
 	}
+
 
 	static class ProjectPropertiesLoader {
 
